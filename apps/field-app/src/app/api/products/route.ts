@@ -1,114 +1,36 @@
 import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/db/prisma';
 import { getAuthContext } from '@/lib/auth';
-import { shopifyGraphQL } from '@/lib/shopify/client';
 import type { ApiError } from '@/types';
-
-interface ShopifyProduct {
-  id: string;
-  title: string;
-  handle: string;
-  status: string;
-  featuredImage: {
-    url: string;
-    altText: string | null;
-  } | null;
-  priceRangeV2: {
-    minVariantPrice: {
-      amount: string;
-      currencyCode: string;
-    };
-  };
-  variants: {
-    edges: Array<{
-      node: {
-        id: string;
-        title: string;
-        sku: string | null;
-        price: string;
-        availableForSale: boolean;
-        inventoryQuantity: number | null;
-      };
-    }>;
-  };
-}
-
-interface ProductsQueryResponse {
-  products: {
-    edges: Array<{
-      node: ShopifyProduct;
-      cursor: string;
-    }>;
-    pageInfo: {
-      hasNextPage: boolean;
-      endCursor: string | null;
-    };
-  };
-}
-
-const PRODUCTS_QUERY = `
-  query GetProducts($first: Int!, $after: String, $query: String) {
-    products(first: $first, after: $after, query: $query, sortKey: TITLE) {
-      edges {
-        node {
-          id
-          title
-          handle
-          status
-          featuredImage {
-            url
-            altText
-          }
-          priceRangeV2 {
-            minVariantPrice {
-              amount
-              currencyCode
-            }
-          }
-          variants(first: 10) {
-            edges {
-              node {
-                id
-                title
-                sku
-                price
-                availableForSale
-                inventoryQuantity
-              }
-            }
-          }
-        }
-        cursor
-      }
-      pageInfo {
-        hasNextPage
-        endCursor
-      }
-    }
-  }
-`;
 
 export interface ProductListItem {
   id: string;
+  shopifyProductId: string;
   title: string;
-  handle: string;
+  description: string | null;
   imageUrl: string | null;
-  price: string;
-  currency: string;
+  productType: string | null;
+  vendor: string | null;
   variants: Array<{
     id: string;
+    shopifyVariantId: string;
     title: string;
     sku: string | null;
-    price: string;
+    priceCents: number;
     available: boolean;
     inventoryQuantity: number | null;
   }>;
 }
 
 export interface ProductsResponse {
-  products: ProductListItem[];
-  pageInfo: {
+  items: ProductListItem[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    totalItems: number;
+    totalPages: number;
     hasNextPage: boolean;
-    endCursor: string | null;
+    hasPreviousPage: boolean;
   };
 }
 
@@ -118,41 +40,70 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
 
     const query = searchParams.get('query') || '';
-    const after = searchParams.get('after') || null;
-    const limit = Math.min(50, Math.max(1, parseInt(searchParams.get('limit') || '20')));
+    const page = Math.max(1, parseInt(searchParams.get('page') || '1'));
+    const pageSize = Math.min(50, Math.max(1, parseInt(searchParams.get('pageSize') || '20')));
 
-    // Build Shopify query string
-    let shopifyQuery = 'status:active';
-    if (query) {
-      shopifyQuery += ` AND (title:*${query}* OR sku:*${query}*)`;
-    }
+    const skip = (page - 1) * pageSize;
 
-    const data = await shopifyGraphQL<ProductsQueryResponse>(shopId, PRODUCTS_QUERY, {
-      first: limit,
-      after,
-      query: shopifyQuery,
-    });
+    // Build where clause
+    const where = {
+      shopId,
+      enabledForFieldApp: true,
+      isActive: true,
+      ...(query && {
+        OR: [
+          { title: { contains: query, mode: 'insensitive' as const } },
+          { variants: { some: { sku: { contains: query, mode: 'insensitive' as const } } } },
+        ],
+      }),
+    };
 
-    const products: ProductListItem[] = data.products.edges.map(({ node }) => ({
-      id: node.id,
-      title: node.title,
-      handle: node.handle,
-      imageUrl: node.featuredImage?.url || null,
-      price: node.priceRangeV2.minVariantPrice.amount,
-      currency: node.priceRangeV2.minVariantPrice.currencyCode,
-      variants: node.variants.edges.map(({ node: variant }) => ({
+    const [products, totalItems] = await Promise.all([
+      prisma.product.findMany({
+        where,
+        skip,
+        take: pageSize,
+        orderBy: { title: 'asc' },
+        include: {
+          variants: {
+            orderBy: { position: 'asc' },
+          },
+        },
+      }),
+      prisma.product.count({ where }),
+    ]);
+
+    const items: ProductListItem[] = products.map((product) => ({
+      id: product.id,
+      shopifyProductId: product.shopifyProductId,
+      title: product.title,
+      description: product.description,
+      imageUrl: product.imageUrl,
+      productType: product.productType,
+      vendor: product.vendor,
+      variants: product.variants.map((variant) => ({
         id: variant.id,
+        shopifyVariantId: variant.shopifyVariantId,
         title: variant.title,
         sku: variant.sku,
-        price: variant.price,
-        available: variant.availableForSale,
+        priceCents: variant.priceCents,
+        available: variant.isAvailable,
         inventoryQuantity: variant.inventoryQuantity,
       })),
     }));
 
+    const totalPages = Math.ceil(totalItems / pageSize);
+
     const response: ProductsResponse = {
-      products,
-      pageInfo: data.products.pageInfo,
+      items,
+      pagination: {
+        page,
+        pageSize,
+        totalItems,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPreviousPage: page > 1,
+      },
     };
 
     return NextResponse.json({ data: response, error: null });

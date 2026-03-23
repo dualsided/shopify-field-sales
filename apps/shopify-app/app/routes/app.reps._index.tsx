@@ -64,6 +64,9 @@ export default function SalesRepsPage() {
 
   return (
     <s-page heading="Sales Reps">
+      <s-link slot="secondary-actions" href="/app/territories">
+        Manage Territories
+      </s-link>
       <s-link slot="secondary-actions" href="/app/reps/create">
         Add Sales Rep
       </s-link>

@@ -40,15 +40,6 @@ interface ShopifyAddress {
   phone?: string;
 }
 
-// Helper to convert Shopify numeric ID to GID format
-function toCompanyGid(id: number): string {
-  return `gid://shopify/Company/${id}`;
-}
-
-function toLocationGid(id: number): string {
-  return `gid://shopify/CompanyLocation/${id}`;
-}
-
 /**
  * Process company webhook events (create, update, delete)
  */
@@ -68,7 +59,8 @@ export async function processCompanyWebhook(
       return { success: false, error: "Shop not found" };
     }
 
-    const shopifyCompanyId = toCompanyGid(payload.id);
+    // Store numeric ID only (not full GID)
+    const shopifyCompanyId = String(payload.id);
 
     if (topic === "COMPANIES_DELETE") {
       // Soft delete - mark as inactive
@@ -140,8 +132,9 @@ export async function processCompanyLocationWebhook(
       return { success: false, error: "Shop not found" };
     }
 
-    const shopifyCompanyId = toCompanyGid(payload.company_id);
-    const shopifyLocationId = toLocationGid(payload.id);
+    // Store numeric IDs only (not full GIDs)
+    const shopifyCompanyId = String(payload.company_id);
+    const shopifyLocationId = String(payload.id);
 
     // Find the company
     const company = await prisma.company.findUnique({
@@ -249,14 +242,6 @@ interface ShopifyProductPayload {
   }>;
 }
 
-function toProductGid(id: number): string {
-  return `gid://shopify/Product/${id}`;
-}
-
-function toVariantGid(id: number): string {
-  return `gid://shopify/ProductVariant/${id}`;
-}
-
 function mapProductStatus(status: string): ProductStatus {
   switch (status) {
     case "active":
@@ -300,7 +285,8 @@ export async function processProductWebhook(
       return { success: false, error: "Shop not found" };
     }
 
-    const shopifyProductId = toProductGid(payload.id);
+    // Store numeric ID only (not full GID)
+    const shopifyProductId = String(payload.id);
 
     if (topic === "PRODUCTS_DELETE") {
       // Delete product and variants (cascade)
@@ -387,7 +373,8 @@ export async function processProductWebhook(
       const incomingVariantIds = new Set<string>();
 
       for (const variant of payload.variants) {
-        const shopifyVariantId = toVariantGid(variant.id);
+        // Store numeric ID only (not full GID)
+        const shopifyVariantId = String(variant.id);
         incomingVariantIds.add(shopifyVariantId);
 
         await prisma.productVariant.upsert({

@@ -1,80 +1,13 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { getAuthContext } from '@/lib/auth';
-import { shopifyGraphQL } from '@/lib/shopify/client';
-import { evaluatePromotions, formatDiscountsForDraftOrder } from '@/services/promotion-engine';
+import { evaluatePromotions } from '@/services/promotion-engine';
 import type { CartLineItem as PromotionCartLineItem } from '@/services/promotion-engine';
 import type { ApiError, CartLineItem } from '@/types';
 
 interface CreateOrderRequest {
   companyId: string;
 }
-
-interface DraftOrderCreateResponse {
-  draftOrderCreate: {
-    draftOrder: {
-      id: string;
-      name: string;
-      totalPrice: string;
-      currencyCode: string;
-    } | null;
-    userErrors: Array<{
-      field: string[];
-      message: string;
-    }>;
-  };
-}
-
-interface DraftOrderCompleteResponse {
-  draftOrderComplete: {
-    draftOrder: {
-      id: string;
-      order: {
-        id: string;
-        name: string;
-      } | null;
-    } | null;
-    userErrors: Array<{
-      field: string[];
-      message: string;
-    }>;
-  };
-}
-
-const DRAFT_ORDER_CREATE_MUTATION = `
-  mutation DraftOrderCreate($input: DraftOrderInput!) {
-    draftOrderCreate(input: $input) {
-      draftOrder {
-        id
-        name
-        totalPrice
-        currencyCode
-      }
-      userErrors {
-        field
-        message
-      }
-    }
-  }
-`;
-
-const DRAFT_ORDER_COMPLETE_MUTATION = `
-  mutation DraftOrderComplete($id: ID!) {
-    draftOrderComplete(id: $id) {
-      draftOrder {
-        id
-        order {
-          id
-          name
-        }
-      }
-      userErrors {
-        field
-        message
-      }
-    }
-  }
-`;
 
 export async function GET(request: Request) {
   try {
@@ -232,89 +165,25 @@ export async function POST(request: Request) {
     // Evaluate promotions
     const promoResult = await evaluatePromotions(shopId, promotionLineItems);
 
-    // Format line items with discounts for Shopify DraftOrder
-    const shopifyLineItems = formatDiscountsForDraftOrder(promoResult);
-
-    // Create draft order in Shopify with promotions applied
-    const draftOrderInput = {
-      purchasingEntity: company.shopifyCompanyId ? {
-        purchasingCompany: {
-          companyId: company.shopifyCompanyId,
-        },
-      } : undefined,
-      lineItems: shopifyLineItems,
-      note: cart.notes || `Order placed by sales rep`,
-    };
-
-    const draftOrderResponse = await shopifyGraphQL<DraftOrderCreateResponse>(
-      shopId,
-      DRAFT_ORDER_CREATE_MUTATION,
-      { input: draftOrderInput }
-    );
-
-    if (draftOrderResponse.draftOrderCreate.userErrors.length > 0) {
-      const errorMessage = draftOrderResponse.draftOrderCreate.userErrors
-        .map((e) => e.message)
-        .join(', ');
-      return NextResponse.json<ApiError>(
-        { data: null, error: { code: 'SHOPIFY_ERROR', message: errorMessage } },
-        { status: 400 }
-      );
-    }
-
-    const draftOrder = draftOrderResponse.draftOrderCreate.draftOrder;
-    if (!draftOrder) {
-      return NextResponse.json<ApiError>(
-        { data: null, error: { code: 'SHOPIFY_ERROR', message: 'Failed to create draft order' } },
-        { status: 500 }
-      );
-    }
-
-    // Complete the draft order to create actual order
-    const completeResponse = await shopifyGraphQL<DraftOrderCompleteResponse>(
-      shopId,
-      DRAFT_ORDER_COMPLETE_MUTATION,
-      { id: draftOrder.id }
-    );
-
-    if (completeResponse.draftOrderComplete.userErrors.length > 0) {
-      const errorMessage = completeResponse.draftOrderComplete.userErrors
-        .map((e) => e.message)
-        .join(', ');
-      return NextResponse.json<ApiError>(
-        { data: null, error: { code: 'SHOPIFY_ERROR', message: errorMessage } },
-        { status: 400 }
-      );
-    }
-
-    const completedDraftOrder = completeResponse.draftOrderComplete.draftOrder;
-    const shopifyOrder = completedDraftOrder?.order;
-
-    if (!shopifyOrder) {
-      return NextResponse.json<ApiError>(
-        { data: null, error: { code: 'SHOPIFY_ERROR', message: 'Failed to complete order' } },
-        { status: 500 }
-      );
-    }
-
     // Generate internal order number
     const orderCount = await prisma.order.count({ where: { shopId } });
     const orderNumber = `FS-${String(orderCount + 1).padStart(6, '0')}`;
 
-    // Save order with line items in our database
+    // Save order to database (shopify-app will sync to Shopify)
     const order = await prisma.order.create({
       data: {
         shopId,
         salesRepId: repId,
         companyId: body.companyId,
         orderNumber,
-        shopifyDraftOrderId: draftOrder.id,
-        shopifyOrderId: shopifyOrder.id,
-        shopifyOrderNumber: shopifyOrder.name,
+        // Shopify IDs will be populated by shopify-app after sync
+        shopifyDraftOrderId: null,
+        shopifyOrderId: null,
+        shopifyOrderNumber: null,
         subtotalCents: promoResult.subtotalCents,
         discountCents: promoResult.totalDiscountCents,
         totalCents: promoResult.finalTotalCents,
-        currency: draftOrder.currencyCode || 'USD',
+        currency: 'USD',
         status: 'PENDING',
         paymentTerms: company.paymentTerms,
         note: cart.notes,
@@ -330,7 +199,7 @@ export async function POST(request: Request) {
             quantity: item.quantity,
             unitPriceCents: item.unitPriceCents,
             discountCents: item.totalDiscountCents,
-            taxCents: 0, // Will be updated via webhook when Shopify calculates tax
+            taxCents: 0,
             totalCents: item.finalPriceCents,
           })),
         },

@@ -41,17 +41,60 @@ function calculateSummary(lineItems: CartLineItem[]): CartSummary {
   };
 }
 
+/**
+ * Extract numeric ID from Shopify GID if present
+ */
+function extractNumericId(idOrGid: string): string {
+  if (idOrGid.startsWith('gid://shopify/')) {
+    return idOrGid.split('/').pop() || idOrGid;
+  }
+  return idOrGid;
+}
+
+/**
+ * Resolve company ID - accepts internal ID, Shopify numeric ID, or Shopify GID
+ * Returns the internal company ID or null if not found
+ */
+async function resolveCompanyId(shopId: string, companyIdOrGid: string): Promise<string | null> {
+  // First, try to find by internal ID (CUIDs start with 'c')
+  if (companyIdOrGid.startsWith('c')) {
+    const company = await prisma.company.findFirst({
+      where: { shopId, id: companyIdOrGid },
+      select: { id: true },
+    });
+    if (company) return company.id;
+  }
+
+  // Extract numeric ID if it's a GID, then look up by shopifyCompanyId
+  const numericId = extractNumericId(companyIdOrGid);
+  const company = await prisma.company.findFirst({
+    where: { shopId, shopifyCompanyId: numericId },
+    select: { id: true },
+  });
+  return company?.id ?? null;
+}
+
 export async function GET(request: Request) {
   try {
     const { shopId, repId } = await getAuthContext();
     const { searchParams } = new URL(request.url);
 
-    const companyId = searchParams.get('companyId');
+    const companyIdParam = searchParams.get('companyId');
 
-    if (!companyId) {
+    if (!companyIdParam) {
       return NextResponse.json<ApiError>(
         { data: null, error: { code: 'VALIDATION_ERROR', message: 'Company ID is required' } },
         { status: 400 }
+      );
+    }
+
+    // Resolve company ID (handles both internal IDs and Shopify GIDs)
+    const companyId = await resolveCompanyId(shopId, companyIdParam);
+
+    if (!companyId) {
+      return NextResponse.json<ApiError>(
+        { data: null, error: { code: 'NOT_FOUND', message: 'Company not found' } },
+        { status: 404 }
       );
     }
 
@@ -120,12 +163,22 @@ export async function PUT(request: Request) {
       );
     }
 
+    // Resolve company ID (handles both internal IDs and Shopify GIDs)
+    const companyId = await resolveCompanyId(shopId, body.companyId);
+
+    if (!companyId) {
+      return NextResponse.json<ApiError>(
+        { data: null, error: { code: 'NOT_FOUND', message: 'Company not found' } },
+        { status: 404 }
+      );
+    }
+
     // Find or create active cart
     let cart = await prisma.cartSession.findFirst({
       where: {
         shopId,
         repId,
-        companyId: body.companyId,
+        companyId,
         status: 'ACTIVE',
       },
     });
@@ -135,7 +188,7 @@ export async function PUT(request: Request) {
         data: {
           shopId,
           repId,
-          companyId: body.companyId,
+          companyId,
           lineItems: [],
           discountCodes: [],
           status: 'ACTIVE',
@@ -255,12 +308,22 @@ export async function DELETE(request: Request) {
     const { shopId, repId } = await getAuthContext();
     const { searchParams } = new URL(request.url);
 
-    const companyId = searchParams.get('companyId');
+    const companyIdParam = searchParams.get('companyId');
 
-    if (!companyId) {
+    if (!companyIdParam) {
       return NextResponse.json<ApiError>(
         { data: null, error: { code: 'VALIDATION_ERROR', message: 'Company ID is required' } },
         { status: 400 }
+      );
+    }
+
+    // Resolve company ID (handles both internal IDs and Shopify GIDs)
+    const companyId = await resolveCompanyId(shopId, companyIdParam);
+
+    if (!companyId) {
+      return NextResponse.json<ApiError>(
+        { data: null, error: { code: 'NOT_FOUND', message: 'Company not found' } },
+        { status: 404 }
       );
     }
 

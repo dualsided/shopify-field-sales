@@ -226,15 +226,17 @@ Both apps share the same database with these core models:
 
 ## Webhooks
 
-The field-app receives Shopify webhooks for data sync:
+The **shopify-app** receives Shopify webhooks and syncs data to the shared database. The field-app queries this database for up-to-date product, company, and order information.
 
-| Topic | Endpoint | Purpose |
-|-------|----------|---------|
-| `products/create` | `/api/webhooks/shopify/products` | Sync new products |
-| `products/update` | `/api/webhooks/shopify/products` | Update product data |
-| `products/delete` | `/api/webhooks/shopify/products` | Remove deleted products |
-| `orders/create` | `/api/webhooks/shopify/orders` | Sync order updates |
-| `orders/updated` | `/api/webhooks/shopify/orders` | Update order status |
+Webhook subscriptions are configured in `apps/shopify-app/shopify.app.toml`:
+
+| Topic | Purpose |
+|-------|---------|
+| `products/create`, `products/update`, `products/delete` | Sync product catalog |
+| `companies/create`, `companies/update`, `companies/delete` | Sync B2B companies |
+| `company_locations/*` | Sync company locations |
+| `orders/create`, `orders/updated` | Sync order status |
+| `app/uninstalled` | Clean up on app removal |
 
 ## Deployment
 
@@ -260,7 +262,6 @@ This monorepo is configured for Render deployment using a Blueprint (`render.yam
 | `SHOPIFY_API_SECRET` | shopify-app | From Shopify Partner Dashboard |
 | `SHOPIFY_APP_URL` | shopify-app | Your Render service URL |
 | `NEXT_PUBLIC_APP_URL` | field-app | Your Render service URL |
-| `SHOPIFY_API_SECRET` | field-app | Same as shopify-app (for webhook verification) |
 | `STRIPE_SECRET_KEY` | field-app | Optional - for payment vaulting |
 | `STRIPE_WEBHOOK_SECRET` | field-app | Optional - for Stripe webhooks |
 

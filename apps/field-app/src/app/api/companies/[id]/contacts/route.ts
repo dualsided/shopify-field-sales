@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { requireRole } from '@/lib/auth';
-import { syncContactToShopifyCustomer } from '@/services/shopify-customer-sync';
 import type { ApiError, CompanyContact } from '@/types';
 
 interface RouteParams {
@@ -155,11 +154,6 @@ export async function POST(request: Request, { params }: RouteParams) {
         isPrimary,
         canPlaceOrders: body.canPlaceOrders ?? true,
       },
-    });
-
-    // Sync to Shopify as a Customer (async, don't block response)
-    syncContactToShopifyCustomer(shopId, contact.id).catch((err) => {
-      console.error('Failed to sync contact to Shopify:', err);
     });
 
     const result: CompanyContact = {

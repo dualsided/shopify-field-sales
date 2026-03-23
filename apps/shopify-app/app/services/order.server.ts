@@ -1,5 +1,6 @@
 import prisma from "../db.server";
 import type { OrderStatus, PaymentTerms } from "@prisma/client";
+import { toGid, fromGid } from "../lib/shopify-ids";
 
 // Types
 export interface OrderListItem {
@@ -801,9 +802,9 @@ export async function syncOrderToShopifyDraft(
   }
 
   try {
-    // Build line items for Shopify
+    // Build line items for Shopify (convert numeric IDs to GIDs for GraphQL)
     const lineItems: DraftOrderLineItemInput[] = order.lineItems.map((li) => ({
-      ...(li.shopifyVariantId && { variantId: li.shopifyVariantId }),
+      ...(li.shopifyVariantId && { variantId: toGid("ProductVariant", li.shopifyVariantId) }),
       title: li.title,
       quantity: li.quantity,
       originalUnitPrice: (li.unitPriceCents / 100).toFixed(2),
@@ -845,10 +846,10 @@ export async function syncOrderToShopifyDraft(
       ...(billingAddress && { billingAddress }),
     };
 
-    // Add customer if contact has Shopify customer ID
+    // Add customer if contact has Shopify customer ID (convert to GID for GraphQL)
     if (order.contact?.shopifyCustomerId) {
       input.purchasingEntity = {
-        customerId: order.contact.shopifyCustomerId,
+        customerId: toGid("Customer", order.contact.shopifyCustomerId),
       };
     }
 
@@ -869,7 +870,7 @@ export async function syncOrderToShopifyDraft(
     // If order already has a Shopify draft order ID, update it; otherwise create new
     if (order.shopifyDraftOrderId) {
       response = await admin.graphql(DRAFT_ORDER_UPDATE_MUTATION, {
-        variables: { id: order.shopifyDraftOrderId, input },
+        variables: { id: toGid("DraftOrder", order.shopifyDraftOrderId), input },
       });
       result = await response.json();
 
@@ -892,10 +893,13 @@ export async function syncOrderToShopifyDraft(
         return { success: false, error: errors.map((e) => e.message).join(", ") };
       }
 
-      const shopifyDraftOrderId = result.data?.draftOrderCreate?.draftOrder?.id;
-      if (!shopifyDraftOrderId) {
+      const shopifyDraftOrderGid = result.data?.draftOrderCreate?.draftOrder?.id;
+      if (!shopifyDraftOrderGid) {
         return { success: false, error: "Failed to create draft order in Shopify" };
       }
+
+      // Extract numeric ID from GID for storage
+      const shopifyDraftOrderId = fromGid(shopifyDraftOrderGid);
 
       // Update local order with Shopify draft order ID (status stays DRAFT until invoice sent)
       await prisma.order.update({
@@ -939,7 +943,7 @@ export async function completeDraftOrder(
   try {
     const response = await admin.graphql(DRAFT_ORDER_COMPLETE_MUTATION, {
       variables: {
-        id: order.shopifyDraftOrderId,
+        id: toGid("DraftOrder", order.shopifyDraftOrderId),
         paymentPending,
       },
     });
@@ -969,11 +973,14 @@ export async function completeDraftOrder(
       return { success: false, error: "Failed to complete draft order in Shopify" };
     }
 
+    // Extract numeric ID from GID for storage
+    const shopifyOrderId = fromGid(shopifyOrder.id);
+
     // Update local order with Shopify order info
     await prisma.order.update({
       where: { id: orderId },
       data: {
-        shopifyOrderId: shopifyOrder.id,
+        shopifyOrderId,
         shopifyOrderNumber: shopifyOrder.name,
         status: paymentPending ? "PENDING" : "PAID",
         placedAt: new Date(),
@@ -983,7 +990,7 @@ export async function completeDraftOrder(
 
     return {
       success: true,
-      shopifyOrderId: shopifyOrder.id,
+      shopifyOrderId,
       shopifyOrderNumber: shopifyOrder.name,
     };
   } catch (error) {
@@ -1018,7 +1025,7 @@ export async function deleteShopifyDraftOrder(
   try {
     const response = await admin.graphql(DRAFT_ORDER_DELETE_MUTATION, {
       variables: {
-        input: { id: order.shopifyDraftOrderId },
+        input: { id: toGid("DraftOrder", order.shopifyDraftOrderId) },
       },
     });
 
@@ -1106,7 +1113,7 @@ export async function submitOrderForPayment(
       // Note: This requires the store to have the appropriate payment gateway configured
       const response = await admin.graphql(DRAFT_ORDER_COMPLETE_WITH_PAYMENT_MUTATION, {
         variables: {
-          id: syncResult.shopifyDraftOrderId,
+          id: toGid("DraftOrder", syncResult.shopifyDraftOrderId),
           paymentPending: false, // Payment is being collected now
           sourceName: "Field Sales App",
         },
@@ -1138,12 +1145,15 @@ export async function submitOrderForPayment(
         return { success: false, error: "Failed to complete order with payment" };
       }
 
+      // Extract numeric ID from GID for storage
+      const shopifyOrderId = fromGid(shopifyOrder.id);
+
       // Update local order with Shopify order details
       await prisma.order.update({
         where: { id: orderId },
         data: {
           status: "PAID",
-          shopifyOrderId: shopifyOrder.id,
+          shopifyOrderId,
           shopifyOrderNumber: shopifyOrder.name,
           placedAt: new Date(),
           paidAt: new Date(),
@@ -1153,7 +1163,7 @@ export async function submitOrderForPayment(
       return {
         success: true,
         shopifyDraftOrderId: syncResult.shopifyDraftOrderId,
-        shopifyOrderId: shopifyOrder.id,
+        shopifyOrderId,
         shopifyOrderNumber: shopifyOrder.name,
         paymentStatus: 'paid',
       };
@@ -1178,7 +1188,7 @@ export async function submitOrderForPayment(
 
       const response = await admin.graphql(DRAFT_ORDER_INVOICE_SEND_MUTATION, {
         variables: {
-          id: syncResult.shopifyDraftOrderId,
+          id: toGid("DraftOrder", syncResult.shopifyDraftOrderId),
           email: invoiceInput,
         },
       });
@@ -1257,7 +1267,7 @@ export async function getDraftOrderStatus(
 
   try {
     const response = await admin.graphql(DRAFT_ORDER_QUERY, {
-      variables: { id: order.shopifyDraftOrderId },
+      variables: { id: toGid("DraftOrder", order.shopifyDraftOrderId) },
     });
 
     const result: {
@@ -1282,7 +1292,7 @@ export async function getDraftOrderStatus(
       success: true,
       status: draftOrder.status,
       hasOrder: !!draftOrder.order,
-      orderId: draftOrder.order?.id,
+      orderId: draftOrder.order ? fromGid(draftOrder.order.id) : undefined,
       orderName: draftOrder.order?.name,
     };
   } catch (error) {
@@ -1369,7 +1379,8 @@ export async function processOrderWebhook(
       return { success: false, error: "Shop not found" };
     }
 
-    const shopifyOrderId = payload.admin_graphql_api_id;
+    // Extract numeric ID from GID for storage/lookup
+    const shopifyOrderId = fromGid(payload.admin_graphql_api_id);
 
     // First, check if we already have an order linked to this Shopify order
     let order = await prisma.order.findFirst({
@@ -1445,7 +1456,8 @@ export async function processDraftOrderWebhook(
       return { success: false, error: "Shop not found" };
     }
 
-    const shopifyDraftOrderId = payload.admin_graphql_api_id;
+    // Extract numeric ID from GID for storage/lookup
+    const shopifyDraftOrderId = fromGid(payload.admin_graphql_api_id);
 
     // Find local order by draft order ID
     const order = await prisma.order.findFirst({
@@ -1459,8 +1471,8 @@ export async function processDraftOrderWebhook(
 
     // Check if draft order was completed (converted to real order)
     if (payload.status === "completed" && payload.order_id) {
-      // Construct the Shopify Order GID from the numeric order_id
-      const shopifyOrderId = `gid://shopify/Order/${payload.order_id}`;
+      // Store numeric ID only (not full GID)
+      const shopifyOrderId = String(payload.order_id);
 
       await prisma.order.update({
         where: { id: order.id },

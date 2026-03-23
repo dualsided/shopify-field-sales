@@ -29,8 +29,8 @@ src/
 │   ├── api/            # API route handlers
 │   └── login/          # Public login page
 ├── components/         # React components
-├── lib/               # Utilities (auth, db, redis, shopify client)
-├── services/          # Business logic (product-sync, promotion-engine)
+├── lib/               # Utilities (auth, db, redis)
+├── services/          # Business logic (promotion-engine)
 └── types/             # TypeScript type definitions
 ```
 
@@ -39,11 +39,17 @@ src/
 - Custom Prisma client output: `./node_modules/.prisma/field-app-client`
 - Import Prisma types from `.prisma/field-app-client`
 
+### Data Flow
+- **This app does NOT interact with Shopify directly**
+- Products, companies, and orders are synced by the shopify-app via webhooks
+- This app reads from and writes to the shared database only
+- Orders created here are picked up by shopify-app and synced to Shopify
+
 ### Key Models
 - `Shop` - Tenant (Shopify store)
 - `SalesRep` - App users with `shopId`, `role`, territories
-- `Company` - B2B customers synced from Shopify
-- `Product/ProductVariant` - Products synced from Shopify
+- `Company` - B2B customers (synced from Shopify by shopify-app)
+- `Product/ProductVariant` - Products (synced from Shopify by shopify-app)
 - `CartSession` - Active shopping carts
 - `Order/OrderLineItem` - Orders placed through the app
 - `Promotion` - App-managed discounts
@@ -72,13 +78,6 @@ const { shopId, repId, role } = await getAuthContext();
 // role is 'REP' | 'MANAGER' | 'ADMIN'
 ```
 
-### Shopify GraphQL
-```typescript
-import { shopifyGraphQL } from '@/lib/shopify/client';
-
-const data = await shopifyGraphQL<ResponseType>(shopId, QUERY, variables);
-```
-
 ### Error Response Pattern
 ```typescript
 return NextResponse.json<ApiError>(
@@ -105,8 +104,12 @@ return NextResponse.json<ApiError>(
 
 ### Products
 - Products must have `enabledForFieldApp: true` to show in field app
-- Auto-enabled via inclusion tag matching
-- Synced from Shopify via webhooks
+- Auto-enabled via inclusion tag matching (configured in shopify-app)
+- Synced from Shopify by shopify-app webhooks
+
+### Orders
+- Orders are saved to database with status PENDING
+- shopify-app syncs orders to Shopify and updates status
 
 ## Testing Locally
 
