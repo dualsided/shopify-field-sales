@@ -1,0 +1,82 @@
+# Render Blueprint for Field Sales Manager
+# https://render.com/docs/blueprint-spec
+
+services:
+  # Shopify Embedded App (React Router / Remix)
+  - type: web
+    name: field-sales-shopify-app
+    runtime: node
+    region: oregon
+    plan: starter
+    buildCommand: npm install && npm run build --workspace=apps/shopify-app && npm run setup --workspace=apps/shopify-app
+    startCommand: npm run start --workspace=apps/shopify-app
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: field-sales-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: field-sales-redis
+          type: redis
+          property: connectionString
+      - key: SHOPIFY_API_KEY
+        sync: false
+      - key: SHOPIFY_API_SECRET
+        sync: false
+      - key: SCOPES
+        value: read_products,write_products,read_orders,write_orders,read_customers,read_companies
+      - key: SHOPIFY_APP_URL
+        sync: false
+
+  # Field Sales App (Next.js)
+  - type: web
+    name: field-sales-field-app
+    runtime: node
+    region: oregon
+    plan: starter
+    buildCommand: npm install && npm run build --workspace=apps/field-app && npx prisma generate --schema=apps/field-app/prisma/schema.prisma
+    startCommand: npm run start --workspace=apps/field-app
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: field-sales-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: field-sales-redis
+          type: redis
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 1h
+      - key: REFRESH_TOKEN_EXPIRES_IN
+        value: 7d
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false
+      - key: SHOPIFY_API_SECRET
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+
+databases:
+  - name: field-sales-db
+    region: oregon
+    plan: starter
+    databaseName: field_sales_manager
+    user: field_sales
+
+  - name: field-sales-redis
+    type: redis
+    region: oregon
+    plan: starter
+    maxmemoryPolicy: allkeys-lru

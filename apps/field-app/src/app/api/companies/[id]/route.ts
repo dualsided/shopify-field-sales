@@ -1,0 +1,156 @@
+import { NextResponse } from 'next/server';
+import { prisma } from '@/lib/db/prisma';
+import { getAuthContext, requireRole } from '@/lib/auth';
+import type { ApiError, Company } from '@/types';
+
+interface RouteParams {
+  params: Promise<{ id: string }>;
+}
+
+interface UpdateCompanyRequest {
+  assignedRepId?: string | null;
+  territoryId?: string | null;
+}
+
+export async function GET(request: Request, { params }: RouteParams) {
+  try {
+    const { shopId, repId, role } = await getAuthContext();
+    const { id } = await params;
+
+    const company = await prisma.company.findFirst({
+      where: { id, shopId },
+      include: {
+        territory: true,
+        assignedRep: true,
+      },
+    });
+
+    if (!company) {
+      return NextResponse.json<ApiError>(
+        { data: null, error: { code: 'NOT_FOUND', message: 'Company not found' } },
+        { status: 404 }
+      );
+    }
+
+    // For reps, verify access to company
+    if (role === 'REP') {
+      const hasAccess = company.assignedRepId === repId || (
+        company.territoryId &&
+        await prisma.repTerritory.findFirst({
+          where: { repId, territoryId: company.territoryId },
+        })
+      );
+
+      if (!hasAccess) {
+        return NextResponse.json<ApiError>(
+          { data: null, error: { code: 'FORBIDDEN', message: 'Access denied to this company' } },
+          { status: 403 }
+        );
+      }
+    }
+
+    const result: Company = {
+      id: company.id,
+      shopId: company.shopId,
+      shopifyCompanyId: company.shopifyCompanyId,
+      name: company.name,
+      accountNumber: company.accountNumber,
+      paymentTerms: company.paymentTerms,
+      territoryId: company.territoryId,
+      assignedRepId: company.assignedRepId,
+      syncStatus: company.syncStatus,
+      lastSyncedAt: company.lastSyncedAt,
+      isActive: company.isActive,
+      createdAt: company.createdAt,
+      updatedAt: company.updatedAt,
+    };
+
+    return NextResponse.json({ data: result, error: null });
+  } catch (error) {
+    console.error('Error fetching company:', error);
+    return NextResponse.json<ApiError>(
+      { data: null, error: { code: 'INTERNAL_ERROR', message: 'Failed to fetch company' } },
+      { status: 500 }
+    );
+  }
+}
+
+export async function PUT(request: Request, { params }: RouteParams) {
+  try {
+    const { shopId } = await requireRole('ADMIN', 'MANAGER');
+    const { id } = await params;
+    const body = (await request.json()) as UpdateCompanyRequest;
+
+    // Verify company exists
+    const company = await prisma.company.findFirst({
+      where: { id, shopId },
+    });
+
+    if (!company) {
+      return NextResponse.json<ApiError>(
+        { data: null, error: { code: 'NOT_FOUND', message: 'Company not found' } },
+        { status: 404 }
+      );
+    }
+
+    // Validate assigned rep if provided
+    if (body.assignedRepId) {
+      const rep = await prisma.salesRep.findFirst({
+        where: { id: body.assignedRepId, shopId, isActive: true },
+      });
+
+      if (!rep) {
+        return NextResponse.json<ApiError>(
+          { data: null, error: { code: 'VALIDATION_ERROR', message: 'Invalid rep ID' } },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Validate territory if provided
+    if (body.territoryId) {
+      const territory = await prisma.territory.findFirst({
+        where: { id: body.territoryId, shopId, isActive: true },
+      });
+
+      if (!territory) {
+        return NextResponse.json<ApiError>(
+          { data: null, error: { code: 'VALIDATION_ERROR', message: 'Invalid territory ID' } },
+          { status: 400 }
+        );
+      }
+    }
+
+    const updated = await prisma.company.update({
+      where: { id },
+      data: {
+        ...(body.assignedRepId !== undefined && { assignedRepId: body.assignedRepId }),
+        ...(body.territoryId !== undefined && { territoryId: body.territoryId }),
+      },
+    });
+
+    const result: Company = {
+      id: updated.id,
+      shopId: updated.shopId,
+      shopifyCompanyId: updated.shopifyCompanyId,
+      name: updated.name,
+      accountNumber: updated.accountNumber,
+      paymentTerms: updated.paymentTerms,
+      territoryId: updated.territoryId,
+      assignedRepId: updated.assignedRepId,
+      syncStatus: updated.syncStatus,
+      lastSyncedAt: updated.lastSyncedAt,
+      isActive: updated.isActive,
+      createdAt: updated.createdAt,
+      updatedAt: updated.updatedAt,
+    };
+
+    return NextResponse.json({ data: result, error: null });
+  } catch (error) {
+    console.error('Error updating company:', error);
+    return NextResponse.json<ApiError>(
+      { data: null, error: { code: 'INTERNAL_ERROR', message: 'Failed to update company' } },
+      { status: 500 }
+    );
+  }
+}
