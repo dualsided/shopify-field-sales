@@ -31,6 +31,15 @@ api_version = "2026-01"
   topics = [ "products/create", "products/update", "products/delete" ]
   uri = "/webhooks/products"
 
+  # Billing webhooks
+  [[webhooks.subscriptions]]
+  topics = [ "app_subscriptions/update" ]
+  uri = "/webhooks/billing"
+
+  [[webhooks.subscriptions]]
+  topics = [ "subscription_billing_attempts/success", "subscription_billing_attempts/failure", "subscription_billing_attempts/challenged" ]
+  uri = "/webhooks/billing"
+
   # Note: Order webhooks require protected customer data access approval
   # See: https://shopify.dev/docs/apps/launch/protected-customer-data
   # For now, order sync will be done via polling or manual sync

@@ -3,6 +3,18 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 
+interface QuotaProgress {
+  hasQuota: boolean;
+  targetCents: number | null;
+  achievedCents: number;
+  projectedCents: number;
+  progressPercent: number;
+  projectedPercent: number;
+  remainingCents: number;
+  daysRemaining: number;
+  onPaceIndicator: 'ahead' | 'on_pace' | 'behind' | 'at_risk' | 'no_quota';
+}
+
 interface DashboardMetrics {
   ordersThisMonth: number;
   orderChange: number;
@@ -10,6 +22,7 @@ interface DashboardMetrics {
   revenueChange: number;
   accountCount: number;
   pendingOrders: number;
+  quota: QuotaProgress | null;
 }
 
 interface RecentOrder {
@@ -97,6 +110,93 @@ export default function DashboardPage() {
     );
   };
 
+  const getPaceStyles = (indicator: string) => {
+    switch (indicator) {
+      case 'ahead':
+        return { bg: 'bg-green-100', text: 'text-green-700', label: 'Ahead', progress: 'bg-green-500' };
+      case 'on_pace':
+        return { bg: 'bg-blue-100', text: 'text-blue-700', label: 'On Pace', progress: 'bg-blue-500' };
+      case 'behind':
+        return { bg: 'bg-yellow-100', text: 'text-yellow-700', label: 'Behind', progress: 'bg-yellow-500' };
+      case 'at_risk':
+        return { bg: 'bg-red-100', text: 'text-red-700', label: 'At Risk', progress: 'bg-red-500' };
+      default:
+        return { bg: 'bg-gray-100', text: 'text-gray-600', label: 'No Quota', progress: 'bg-gray-400' };
+    }
+  };
+
+  const QuotaCard = ({ quota }: { quota: QuotaProgress }) => {
+    if (!quota.hasQuota) {
+      return (
+        <div className="card">
+          <p className="text-sm text-gray-500">Monthly Quota</p>
+          <p className="text-lg font-medium text-gray-400 mt-1">No quota assigned</p>
+        </div>
+      );
+    }
+
+    const paceStyles = getPaceStyles(quota.onPaceIndicator);
+    const progressWidth = Math.min(quota.progressPercent, 100);
+    const projectedWidth = Math.min(quota.projectedPercent, 100);
+
+    return (
+      <div className="card">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-sm text-gray-500">Monthly Quota</p>
+          <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${paceStyles.bg} ${paceStyles.text}`}>
+            {paceStyles.label}
+          </span>
+        </div>
+
+        {/* Progress bar */}
+        <div className="relative h-3 bg-gray-200 rounded-full overflow-hidden mb-3">
+          {/* Projected (lighter, behind achieved) */}
+          <div
+            className={`absolute inset-y-0 left-0 ${paceStyles.progress} opacity-30 rounded-full`}
+            style={{ width: `${projectedWidth}%` }}
+          />
+          {/* Achieved (solid) */}
+          <div
+            className={`absolute inset-y-0 left-0 ${paceStyles.progress} rounded-full`}
+            style={{ width: `${progressWidth}%` }}
+          />
+        </div>
+
+        {/* Stats */}
+        <div className="grid grid-cols-3 gap-2 text-center">
+          <div>
+            <p className="text-xs text-gray-500">Target</p>
+            <p className="text-sm font-semibold text-gray-900">
+              {formatPrice(quota.targetCents! / 100)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500">Achieved</p>
+            <p className="text-sm font-semibold text-gray-900">
+              {formatPrice(quota.achievedCents / 100)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500">Remaining</p>
+            <p className="text-sm font-semibold text-gray-900">
+              {formatPrice(quota.remainingCents / 100)}
+            </p>
+          </div>
+        </div>
+
+        {/* Progress percentage and days remaining */}
+        <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
+          <span className="text-sm font-medium text-gray-900">
+            {quota.progressPercent}% achieved
+          </span>
+          <span className="text-xs text-gray-500">
+            {quota.daysRemaining} days left
+          </span>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
@@ -134,6 +234,11 @@ export default function DashboardPage() {
           </p>
         </div>
       </div>
+
+      {/* Quota Progress */}
+      {!loading && data?.metrics.quota && (
+        <QuotaCard quota={data.metrics.quota} />
+      )}
 
       {/* Quick Actions */}
       <section>

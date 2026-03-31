@@ -204,6 +204,7 @@ export async function createSalesRep(
         phone: phone?.trim() || null,
         role: role || "REP",
         isActive: true,
+        activatedAt: new Date(), // Track when rep was activated for billing
         ...(territoryIds && territoryIds.length > 0 && {
           repTerritories: {
             create: territoryIds.map((territoryId, index) => ({
@@ -316,7 +317,10 @@ export async function deactivateSalesRep(
   try {
     await prisma.salesRep.update({
       where: { id: repId },
-      data: { isActive: false },
+      data: {
+        isActive: false,
+        deactivatedAt: new Date(), // Track for billing
+      },
     });
 
     return { success: true };
@@ -341,7 +345,11 @@ export async function activateSalesRep(
   try {
     await prisma.salesRep.update({
       where: { id: repId },
-      data: { isActive: true },
+      data: {
+        isActive: true,
+        activatedAt: new Date(), // Track for billing (each activation starts a new billing period for this rep)
+        deactivatedAt: null, // Clear deactivation
+      },
     });
 
     return { success: true };

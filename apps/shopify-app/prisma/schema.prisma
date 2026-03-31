@@ -49,11 +49,23 @@ model Shop {
   planDetectedAt      DateTime?       @map("plan_detected_at")
   // Product inclusion settings
   productInclusionTag String?         @map("product_inclusion_tag") // Tag to auto-enable products
+
+  // Billing
+  billingPlan           BillingPlan?   @map("billing_plan")
+  billingStatus         BillingStatus  @default(INACTIVE) @map("billing_status")
+  shopifySubscriptionId String?        @map("shopify_subscription_id")  // Shopify App Subscription GID
+  subscriptionStatus    String?        @map("subscription_status")      // ACTIVE, CANCELLED, etc.
+  currentPeriodStart    DateTime?      @map("current_period_start")
+  currentPeriodEnd      DateTime?      @map("current_period_end")
+  trialEndsAt           DateTime?      @map("trial_ends_at")
+
   createdAt           DateTime        @default(now()) @map("created_at")
   updatedAt           DateTime        @updatedAt @map("updated_at")
 
   // Relations
-  products Product[]
+  products       Product[]
+  quotas         RepQuota[]
+  billingPeriods BillingPeriod[]
 
   @@map("shops")
 }
@@ -62,6 +74,25 @@ enum PaymentStrategy {
   SHOPIFY_TERMS @map("shopify_terms")
   STRIPE_VAULT  @map("stripe_vault")
   SHOPIFY_VAULT @map("shopify_vault")
+}
+
+// ============================================
+// BILLING
+// ============================================
+
+enum BillingPlan {
+  BASIC @map("basic")
+  GROW  @map("grow")
+  PRO   @map("pro")
+  PLUS  @map("plus")
+}
+
+enum BillingStatus {
+  INACTIVE  @map("inactive")
+  TRIAL     @map("trial")
+  ACTIVE    @map("active")
+  PAST_DUE  @map("past_due")
+  CANCELLED @map("cancelled")
 }
 
 // Territory model - referenced for queries
@@ -167,20 +198,26 @@ enum SyncStatus {
 
 // Sales Rep model for company assignment
 model SalesRep {
-  id        String   @id @default(cuid())
-  shopId    String   @map("shop_id")
-  email     String
-  firstName String   @map("first_name")
-  lastName  String   @map("last_name")
-  phone     String?
-  role      RepRole  @default(REP)
-  isActive  Boolean  @default(true) @map("is_active")
+  id            String    @id @default(cuid())
+  shopId        String    @map("shop_id")
+  email         String
+  firstName     String    @map("first_name")
+  lastName      String    @map("last_name")
+  phone         String?
+  role          RepRole   @default(REP)
+  isActive      Boolean   @default(true) @map("is_active")
+
+  // Billing tracking - when rep was activated/deactivated
+  activatedAt   DateTime? @map("activated_at")
+  deactivatedAt DateTime? @map("deactivated_at")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
   companies      Company[]
   repTerritories RepTerritory[]
   orders         Order[]
+  quotas         RepQuota[]
 
   @@unique([shopId, email])
   @@index([shopId])
@@ -296,6 +333,7 @@ model Order {
   shippingLocation CompanyLocation? @relation("ShippingLocation", fields: [shippingLocationId], references: [id])
   billingLocation  CompanyLocation? @relation("BillingLocation", fields: [billingLocationId], references: [id])
   lineItems        OrderLineItem[]
+  billedOrder      BilledOrder?     // Revenue share billing record
 
   @@unique([shopId, orderNumber])
   @@unique([shopId, shopifyDraftOrderId])
@@ -308,11 +346,12 @@ model Order {
 }
 
 enum OrderStatus {
-  DRAFT     @map("draft")      // Not yet submitted to Shopify
-  PENDING   @map("pending")    // Submitted as draft order, awaiting payment/completion
-  PAID      @map("paid")       // Payment received
-  CANCELLED @map("cancelled")  // Order cancelled
-  REFUNDED  @map("refunded")   // Order refunded
+  DRAFT           @map("draft")            // Sales rep is building/editing the order
+  AWAITING_REVIEW @map("awaiting_review")  // Submitted for admin approval
+  PENDING         @map("pending")          // Approved and synced to Shopify as draft order
+  PAID            @map("paid")             // Payment received
+  CANCELLED       @map("cancelled")        // Order cancelled
+  REFUNDED        @map("refunded")         // Order refunded
 }
 
 // Order line item model
@@ -326,6 +365,7 @@ model OrderLineItem {
   sku                   String?
   title                 String                                   // Product title
   variantTitle          String?  @map("variant_title")           // Variant title (e.g., "Large / Blue")
+  imageUrl              String?  @map("image_url")               // Product image for display
 
   // Quantity and pricing (cents)
   quantity              Int
@@ -405,4 +445,90 @@ model ProductVariant {
   @@unique([productId, shopifyVariantId])
   @@index([sku])
   @@map("product_variants")
+}
+
+// ============================================
+// QUOTAS
+// ============================================
+
+model RepQuota {
+  id          String   @id @default(cuid())
+  shopId      String   @map("shop_id")
+  repId       String   @map("rep_id")
+  year        Int
+  month       Int      // 1-12
+  targetCents Int      @map("target_cents")
+  note        String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  shop     Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  salesRep SalesRep @relation(fields: [repId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, repId, year, month])
+  @@index([shopId, year, month])
+  @@index([repId])
+  @@map("rep_quotas")
+}
+
+// ============================================
+// BILLING PERIODS & USAGE
+// ============================================
+
+// Billing period - tracks usage for each billing cycle
+model BillingPeriod {
+  id                  String      @id @default(cuid())
+  shopId              String      @map("shop_id")
+  periodStart         DateTime    @map("period_start")
+  periodEnd           DateTime    @map("period_end")
+  plan                BillingPlan
+
+  // Rep charges
+  includedReps        Int         @map("included_reps")           // Reps included in base plan
+  activeRepCount      Int         @default(0) @map("active_rep_count")
+  extraRepCount       Int         @default(0) @map("extra_rep_count")
+  perRepCents         Int         @map("per_rep_cents")           // Rate for this plan
+  repChargesCents     Int         @default(0) @map("rep_charges_cents")
+
+  // Revenue share
+  orderRevenueCents   Int         @default(0) @map("order_revenue_cents")
+  revenueSharePercent Float       @map("revenue_share_percent")   // e.g., 0.50 for 0.50%
+  revenueShareCents   Int         @default(0) @map("revenue_share_cents")
+
+  // Shopify usage record IDs
+  repUsageRecordId    String?     @map("rep_usage_record_id")     // Shopify usage record GID
+  revenueUsageRecordId String?    @map("revenue_usage_record_id") // Shopify usage record GID
+
+  // Status
+  status              String      @default("open")                // open, finalized, billed, failed
+  finalizedAt         DateTime?   @map("finalized_at")
+
+  createdAt           DateTime    @default(now()) @map("created_at")
+  updatedAt           DateTime    @updatedAt @map("updated_at")
+
+  // Relations
+  shop   Shop          @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  orders BilledOrder[]
+
+  @@unique([shopId, periodStart])
+  @@index([shopId, status])
+  @@map("billing_periods")
+}
+
+// BilledOrder - tracks which orders have been counted for revenue share
+model BilledOrder {
+  id                String   @id @default(cuid())
+  billingPeriodId   String   @map("billing_period_id")
+  orderId           String   @unique @map("order_id")
+  totalCents        Int      @map("total_cents")
+  revenueShareCents Int      @map("revenue_share_cents")
+  billedAt          DateTime @default(now()) @map("billed_at")
+
+  // Relations
+  billingPeriod BillingPeriod @relation(fields: [billingPeriodId], references: [id], onDelete: Cascade)
+  order         Order         @relation(fields: [orderId], references: [id])
+
+  @@index([billingPeriodId])
+  @@map("billed_orders")
 }

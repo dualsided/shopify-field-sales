@@ -9,3 +9,4 @@ export * from './auth';
 export * from './api';
 export * from './product';
 export * from './promotion';
+export * from './quota';

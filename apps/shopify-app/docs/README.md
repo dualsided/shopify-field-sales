@@ -1,0 +1,85 @@
+# Shopify App Documentation
+
+Shopify Admin embedded application for merchants to configure Field Sales Manager.
+
+## Overview
+
+This app runs inside the Shopify Admin and handles:
+- Sales rep and territory management
+- Product catalog configuration
+- Order processing and Shopify integration
+- Company/B2B customer management
+- Subscription billing
+
+## Documentation Index
+
+| Document | Description |
+|----------|-------------|
+| [Orders](./orders.md) | Order lifecycle, Shopify draft orders, webhooks |
+| [Territories](./territories.md) | Geographic regions, location assignment |
+| [Companies](./companies.md) | B2B accounts, contacts, locations |
+| [Sales Reps](./sales-reps.md) | Rep management, territory access |
+| [Billing](./billing.md) | Plans, subscriptions, usage tracking |
+
+## Architecture
+
+### Stack
+- React Router 7 (formerly Remix) with Vite
+- TypeScript
+- Shopify Polaris Web Components
+- Prisma ORM with PostgreSQL
+
+### Key Directories
+```
+app/
+├── routes/              # React Router route files
+│   ├── app.*.tsx       # Authenticated app routes
+│   └── webhooks.*.tsx  # Webhook handlers
+├── services/           # Business logic
+├── components/         # Shared components
+├── db.server.ts        # Prisma client
+└── shopify.server.ts   # Shopify auth configuration
+```
+
+### Shopify Integration
+
+This app is the **only** component that interacts with Shopify APIs:
+- GraphQL Admin API for companies, orders, products, customers
+- Webhooks for real-time updates
+- Billing API for subscriptions
+
+### Database
+- Shared PostgreSQL with field-app
+- Standard Prisma client: `@prisma/client`
+- Both apps share the same schema
+
+## Quick Reference
+
+### Routes
+- `app._index.tsx` - Dashboard
+- `app.reps.*` - Sales rep management
+- `app.territories.*` - Territory management
+- `app.companies.*` - Company management
+- `app.orders.*` - Order management
+- `app.products.*` - Product configuration
+- `app.billing.*` - Billing management
+
+### Services
+| Service | Purpose |
+|---------|---------|
+| `order.server.ts` | Order CRUD, Shopify sync |
+| `territory.server.ts` | Territory management |
+| `company.server.ts` | Company import/sync |
+| `salesRep.server.ts` | Rep management |
+| `billing.server.ts` | Subscription billing |
+| `customer.server.ts` | Customer sync |
+| `webhook.server.ts` | Webhook processing |
+
+## Development
+
+```bash
+npm run dev           # Start dev server
+shopify app dev       # Alternative with Shopify CLI
+shopify app deploy    # Deploy config changes
+npx prisma generate   # Generate Prisma client
+```

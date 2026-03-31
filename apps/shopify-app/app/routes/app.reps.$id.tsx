@@ -12,6 +12,12 @@ import {
   type SalesRepDetail,
 } from "../services/salesRep.server";
 import { getActiveTerritories } from "../services/territory.server";
+import {
+  getRepQuotaProgress,
+  getRepQuotaHistory,
+  type QuotaHistoryItem,
+} from "../services/quota.server";
+import type { QuotaProgress } from "@field-sales/shared";
 import { SalesRepForm, type SalesRepFormData } from "../components/SalesRepForm";
 
 interface Territory {
@@ -23,12 +29,51 @@ interface LoaderData {
   rep: SalesRepDetail | null;
   allTerritories: Territory[];
   shopId: string | null;
+  quotaProgress: QuotaProgress | null;
+  quotaHistory: QuotaHistoryItem[];
+  currentYear: number;
+  currentMonth: number;
 }
 
 interface ActionData {
   success?: boolean;
   error?: string;
   deleted?: boolean;
+}
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"
+];
+
+function formatCents(cents: number): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(cents / 100);
+}
+
+function getPaceColor(indicator: string): "success" | "info" | "warning" | "critical" {
+  switch (indicator) {
+    case "ahead": return "success";
+    case "on_pace": return "info";
+    case "behind": return "warning";
+    case "at_risk": return "critical";
+    default: return "info";
+  }
+}
+
+function getPaceLabel(indicator: string): string {
+  switch (indicator) {
+    case "ahead": return "Ahead";
+    case "on_pace": return "On Pace";
+    case "behind": return "Behind";
+    case "at_risk": return "At Risk";
+    case "no_quota": return "No Quota";
+    default: return "";
+  }
 }
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
@@ -40,18 +85,36 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   });
 
   if (!shop || !repId) {
-    return { rep: null, allTerritories: [], shopId: null };
+    return {
+      rep: null,
+      allTerritories: [],
+      shopId: null,
+      quotaProgress: null,
+      quotaHistory: [],
+      currentYear: new Date().getFullYear(),
+      currentMonth: new Date().getMonth() + 1,
+    };
   }
 
-  const [rep, allTerritories] = await Promise.all([
+  const now = new Date();
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth() + 1;
+
+  const [rep, allTerritories, quotaProgress, quotaHistory] = await Promise.all([
     getSalesRepById(shop.id, repId),
     getActiveTerritories(shop.id),
+    getRepQuotaProgress(shop.id, repId, currentYear, currentMonth),
+    getRepQuotaHistory(shop.id, repId, 6),
   ]);
 
   return {
     rep,
     allTerritories,
     shopId: shop.id,
+    quotaProgress,
+    quotaHistory,
+    currentYear,
+    currentMonth,
   };
 };
 
@@ -106,7 +169,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 };
 
 export default function SalesRepDetailPage() {
-  const { rep, allTerritories, shopId } = useLoaderData<LoaderData>();
+  const { rep, allTerritories, shopId, quotaProgress, quotaHistory, currentYear, currentMonth } = useLoaderData<LoaderData>();
   const navigate = useNavigate();
   const fetcher = useFetcher<ActionData>();
   const revalidator = useRevalidator();
@@ -181,6 +244,91 @@ export default function SalesRepDetailPage() {
             actionError={actionData?.error}
           />
         </s-box>
+      </s-section>
+
+      {/* Quota Performance Section */}
+      <s-section>
+        <s-stack gap="base">
+          <s-grid gap="base" gridTemplateColumns="1fr auto">
+            <s-heading>Quota Performance</s-heading>
+            <s-button
+              variant="tertiary"
+              onClick={() => navigate(`/app/quotas/manage?year=${currentYear}&month=${currentMonth}`)}
+            >
+              Edit Quotas
+            </s-button>
+          </s-grid>
+
+          {/* Current Month Progress */}
+          <s-box padding="base" background="subdued" borderRadius="base">
+            <s-stack gap="base">
+              <s-grid gap="base" gridTemplateColumns="1fr auto">
+                <s-text type="strong">{MONTH_NAMES[currentMonth - 1]} {currentYear}</s-text>
+                {quotaProgress && quotaProgress.hasQuota && (
+                  <s-badge tone={getPaceColor(quotaProgress.onPaceIndicator)}>
+                    {getPaceLabel(quotaProgress.onPaceIndicator)}
+                  </s-badge>
+                )}
+              </s-grid>
+
+              {quotaProgress?.hasQuota ? (
+                <s-grid gap="base" gridTemplateColumns="1fr 1fr 1fr 1fr">
+                  <s-stack gap="none">
+                    <s-text color="subdued">Target</s-text>
+                    <s-text type="strong">{formatCents(quotaProgress.targetCents!)}</s-text>
+                  </s-stack>
+                  <s-stack gap="none">
+                    <s-text color="subdued">Achieved</s-text>
+                    <s-text type="strong">{formatCents(quotaProgress.achievedCents)}</s-text>
+                  </s-stack>
+                  <s-stack gap="none">
+                    <s-text color="subdued">Projected</s-text>
+                    <s-text>{formatCents(quotaProgress.projectedCents)}</s-text>
+                  </s-stack>
+                  <s-stack gap="none">
+                    <s-text color="subdued">Progress</s-text>
+                    <s-text type="strong">{quotaProgress.progressPercent}%</s-text>
+                  </s-stack>
+                </s-grid>
+              ) : (
+                <s-text color="subdued">No quota set for this month</s-text>
+              )}
+            </s-stack>
+          </s-box>
+
+          {/* Historical Performance */}
+          {quotaHistory.length > 0 && (
+            <>
+              <s-heading>History</s-heading>
+              <s-table>
+                <s-table-header-row>
+                  <s-table-header>Month</s-table-header>
+                  <s-table-header>Target</s-table-header>
+                  <s-table-header>Achieved</s-table-header>
+                  <s-table-header>Attainment</s-table-header>
+                </s-table-header-row>
+                <s-table-body>
+                  {quotaHistory.map((item) => (
+                    <s-table-row key={`${item.year}-${item.month}`}>
+                      <s-table-cell>{MONTH_NAMES[item.month - 1]} {item.year}</s-table-cell>
+                      <s-table-cell>{formatCents(item.targetCents)}</s-table-cell>
+                      <s-table-cell>{formatCents(item.achievedCents)}</s-table-cell>
+                      <s-table-cell>
+                        <s-badge tone={item.progressPercent >= 100 ? "success" : item.progressPercent >= 80 ? "info" : "warning"}>
+                          {item.progressPercent}%
+                        </s-badge>
+                      </s-table-cell>
+                    </s-table-row>
+                  ))}
+                </s-table-body>
+              </s-table>
+            </>
+          )}
+
+          {quotaHistory.length === 0 && !quotaProgress?.hasQuota && (
+            <s-text color="subdued">No quota history available.</s-text>
+          )}
+        </s-stack>
       </s-section>
 
       <s-section>

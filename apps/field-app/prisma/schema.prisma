@@ -68,6 +68,7 @@ model Shop {
   orders         Order[]
   products       Product[]
   promotions     Promotion[]
+  quotas         RepQuota[]
 
   @@map("shops")
 }
@@ -97,6 +98,7 @@ model SalesRep {
   assignedCompanies Company[]      @relation("AssignedRep")
   cartSessions      CartSession[]
   orders            Order[]
+  quotas            RepQuota[]
 
   @@unique([shopId, email])
   @@index([shopId])
@@ -428,11 +430,12 @@ model Order {
 }
 
 enum OrderStatus {
-  DRAFT     @map("draft")      // Not yet submitted to Shopify
-  PENDING   @map("pending")    // Submitted as draft order, awaiting payment/completion
-  PAID      @map("paid")       // Payment received
-  CANCELLED @map("cancelled")  // Order cancelled
-  REFUNDED  @map("refunded")   // Order refunded
+  DRAFT           @map("draft")            // Sales rep is building/editing the order
+  AWAITING_REVIEW @map("awaiting_review")  // Submitted for admin approval
+  PENDING         @map("pending")          // Approved and synced to Shopify as draft order
+  PAID            @map("paid")             // Payment received
+  CANCELLED       @map("cancelled")        // Order cancelled
+  REFUNDED        @map("refunded")         // Order refunded
 }
 
 model OrderLineItem {
@@ -445,6 +448,7 @@ model OrderLineItem {
   sku                   String?
   title                 String                                   // Product title
   variantTitle          String?  @map("variant_title")           // Variant title (e.g., "Large / Blue")
+  imageUrl              String?  @map("image_url")               // Product image for display
 
   // Quantity and pricing (cents)
   quantity              Int
@@ -570,4 +574,29 @@ enum PromotionType {
   PERCENTAGE  @map("percentage")   // X% off
   FIXED_AMOUNT @map("fixed_amount") // $X off per item
   BUY_X_GET_Y @map("buy_x_get_y")  // Buy X get Y at discount
+}
+
+// ============================================
+// QUOTAS
+// ============================================
+
+model RepQuota {
+  id          String   @id @default(cuid())
+  shopId      String   @map("shop_id")
+  repId       String   @map("rep_id")
+  year        Int
+  month       Int      // 1-12
+  targetCents Int      @map("target_cents")
+  note        String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  shop     Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  salesRep SalesRep @relation(fields: [repId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, repId, year, month])
+  @@index([shopId, year, month])
+  @@index([repId])
+  @@map("rep_quotas")
 }

@@ -1,6 +1,7 @@
 import prisma from "../db.server";
 import type { OrderStatus, PaymentTerms } from "@prisma/client";
 import { toGid, fromGid } from "../lib/shopify-ids";
+import { recordBilledOrder, getCurrentBillingPeriod, PLAN_CONFIGS } from "./billing.server";
 
 // Types
 export interface OrderListItem {
@@ -1331,6 +1332,20 @@ export async function markOrderPaid(
       },
     });
 
+    // Record for billing revenue share (only if shop has active billing)
+    const shop = await prisma.shop.findUnique({
+      where: { id: shopId },
+      select: { billingPlan: true, billingStatus: true },
+    });
+
+    if (shop?.billingPlan && (shop.billingStatus === "ACTIVE" || shop.billingStatus === "TRIAL")) {
+      const billingPeriod = await getCurrentBillingPeriod(shopId);
+      if (billingPeriod) {
+        const planConfig = PLAN_CONFIGS[shop.billingPlan];
+        await recordBilledOrder(orderId, billingPeriod.id, planConfig.revenueSharePercent);
+      }
+    }
+
     return { success: true };
   } catch (error) {
     console.error("Error marking order as paid:", error);
@@ -1369,9 +1384,14 @@ export async function processOrderWebhook(
   console.log(`[Order Webhook] Processing ${topic} for order ${payload.name}`);
 
   try {
-    // Find shop
+    // Find shop with billing info
     const shop = await prisma.shop.findUnique({
       where: { shopifyDomain: shopDomain },
+      select: {
+        id: true,
+        billingPlan: true,
+        billingStatus: true,
+      },
     });
 
     if (!shop) {
@@ -1398,6 +1418,16 @@ export async function processOrderWebhook(
           },
         });
         console.log(`[Order Webhook] Marked order ${order.orderNumber} as PAID`);
+
+        // Record for billing revenue share
+        if (shop.billingPlan && (shop.billingStatus === "ACTIVE" || shop.billingStatus === "TRIAL")) {
+          const billingPeriod = await getCurrentBillingPeriod(shop.id);
+          if (billingPeriod) {
+            const planConfig = PLAN_CONFIGS[shop.billingPlan];
+            await recordBilledOrder(order.id, billingPeriod.id, planConfig.revenueSharePercent);
+            console.log(`[Order Webhook] Recorded billed order for revenue share`);
+          }
+        }
       } else if (topic === "ORDERS_CANCELLED" && order.status !== "CANCELLED") {
         await prisma.order.update({
           where: { id: order.id },
@@ -1446,9 +1476,14 @@ export async function processDraftOrderWebhook(
   console.log(`[Draft Order Webhook] Processing ${topic} for draft ${payload.name}, status: ${payload.status}`);
 
   try {
-    // Find shop
+    // Find shop with billing info
     const shop = await prisma.shop.findUnique({
       where: { shopifyDomain: shopDomain },
+      select: {
+        id: true,
+        billingPlan: true,
+        billingStatus: true,
+      },
     });
 
     if (!shop) {
@@ -1486,6 +1521,16 @@ export async function processDraftOrderWebhook(
       });
 
       console.log(`[Draft Order Webhook] Linked order ${order.orderNumber} to Shopify order ${shopifyOrderId}`);
+
+      // Record for billing revenue share
+      if (shop.billingPlan && (shop.billingStatus === "ACTIVE" || shop.billingStatus === "TRIAL")) {
+        const billingPeriod = await getCurrentBillingPeriod(shop.id);
+        if (billingPeriod) {
+          const planConfig = PLAN_CONFIGS[shop.billingPlan];
+          await recordBilledOrder(order.id, billingPeriod.id, planConfig.revenueSharePercent);
+          console.log(`[Draft Order Webhook] Recorded billed order for revenue share`);
+        }
+      }
     }
 
     return { success: true };

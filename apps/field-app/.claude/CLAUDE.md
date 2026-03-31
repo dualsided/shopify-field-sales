@@ -1,58 +1,34 @@
 # Field App - Claude Context
 
-## What This App Does
-Mobile-first web application for field sales representatives. Sales reps use this to:
-- View and manage assigned accounts (companies)
-- Browse product catalog
-- Build carts and place orders
-- Track order history
+Mobile-first web app for field sales representatives.
+
+> **Detailed documentation:** See `/docs` directory for in-depth guides on [Orders](../docs/orders.md), [Accounts](../docs/accounts.md), [Products](../docs/products.md), [Promotions](../docs/promotions.md), [Cart](../docs/cart.md), and [Auth](../docs/auth.md).
 
 ## Architecture
 
-### Framework
-- Next.js 16 with App Router and Server Components
-- TypeScript in strict mode
-- Tailwind CSS for styling (mobile-first)
+### Stack
+- Next.js 16 with App Router
+- TypeScript (strict mode)
+- Tailwind CSS (mobile-first)
 - Prisma ORM with PostgreSQL
-
-### Authentication
-- JWT-based auth with refresh tokens
-- Sessions stored in Redis
-- Multi-tenant by `shopId` (each Shopify store is a tenant)
-- Role-based access: REP, MANAGER, ADMIN
 
 ### Key Directories
 ```
 src/
-├── app/                 # Next.js App Router pages
-│   ├── (app)/          # Authenticated routes (wrapped in layout)
+├── app/
+│   ├── (app)/          # Authenticated routes
 │   ├── api/            # API route handlers
 │   └── login/          # Public login page
 ├── components/         # React components
-├── lib/               # Utilities (auth, db, redis)
-├── services/          # Business logic (promotion-engine)
-└── types/             # TypeScript type definitions
+├── lib/                # Utilities (auth, db, redis)
+├── services/           # Business logic
+└── types/              # TypeScript definitions
 ```
-
-### Database
-- Shared PostgreSQL database with shopify-app
-- Custom Prisma client output: `./node_modules/.prisma/field-app-client`
-- Import Prisma types from `.prisma/field-app-client`
 
 ### Data Flow
 - **This app does NOT interact with Shopify directly**
-- Products, companies, and orders are synced by the shopify-app via webhooks
-- This app reads from and writes to the shared database only
-- Orders created here are picked up by shopify-app and synced to Shopify
-
-### Key Models
-- `Shop` - Tenant (Shopify store)
-- `SalesRep` - App users with `shopId`, `role`, territories
-- `Company` - B2B customers (synced from Shopify by shopify-app)
-- `Product/ProductVariant` - Products (synced from Shopify by shopify-app)
-- `CartSession` - Active shopping carts
-- `Order/OrderLineItem` - Orders placed through the app
-- `Promotion` - App-managed discounts
+- Reads/writes to shared PostgreSQL database
+- shopify-app handles all Shopify API communication
 
 ## Code Patterns
 
@@ -61,24 +37,15 @@ src/
 export async function GET(request: Request) {
   const { shopId, repId, role } = await getAuthContext();
 
-  // Always filter by shopId
   const data = await prisma.company.findMany({
-    where: { shopId },
+    where: { shopId },  // Always filter by shopId
   });
 
   return NextResponse.json({ data, error: null });
 }
 ```
 
-### Auth Context
-```typescript
-import { getAuthContext } from '@/lib/auth';
-
-const { shopId, repId, role } = await getAuthContext();
-// role is 'REP' | 'MANAGER' | 'ADMIN'
-```
-
-### Error Response Pattern
+### Error Response
 ```typescript
 return NextResponse.json<ApiError>(
   { data: null, error: { code: 'NOT_FOUND', message: 'Resource not found' } },
@@ -89,60 +56,40 @@ return NextResponse.json<ApiError>(
 ## Important Conventions
 
 ### Money
-- Store prices in cents as integers (`totalCents`, `priceCents`)
+- Store in cents as integers (`totalCents`, `priceCents`)
 - Convert to dollars only for display
 
 ### IDs
-- Internal IDs are CUIDs (e.g., `clxyz123...`)
-- Shopify IDs are GIDs (e.g., `gid://shopify/Product/123`)
-- Store both when relevant (`id` and `shopifyProductId`)
+- Internal: CUIDs (`clxyz123...`)
+- Shopify: GIDs (`gid://shopify/Product/123`)
 
 ### Multi-Tenancy
 - Every query MUST include `shopId` filter
 - Never expose data across tenants
-- Rep can only see companies in their territory
-
-### Products
-- Products must have `enabledForFieldApp: true` to show in field app
-- Auto-enabled via inclusion tag matching (configured in shopify-app)
-- Synced from Shopify by shopify-app webhooks
-
-### Orders
-- Orders are saved to database with status PENDING
-- shopify-app syncs orders to Shopify and updates status
-
-## Testing Locally
-
-### Dev Login
-Visit `/login` to select a sales rep without password (dev mode only)
 
 ### Database
-```bash
-npm run db:push      # Push schema changes
-npm run db:seed      # Seed sample data
-npm run db:generate  # Regenerate Prisma client
-```
+- Shared with shopify-app
+- Custom Prisma client: `./node_modules/.prisma/field-app-client`
+- Import types from `.prisma/field-app-client`
 
-### Run Server
+## Quick Commands
+
 ```bash
-npm run dev          # Starts on port 3001
+npm run dev           # Start dev server (port 3001)
+npm run db:push       # Push schema changes
+npm run db:generate   # Regenerate Prisma client
+npm run db:seed       # Seed sample data
 ```
 
 ## Common Tasks
 
 ### Add API Endpoint
-1. Create route in `src/app/api/[resource]/route.ts`
-2. Use `getAuthContext()` for authentication
+1. Create `src/app/api/[resource]/route.ts`
+2. Use `getAuthContext()` for auth
 3. Filter by `shopId` in all queries
 4. Return `{ data, error }` format
 
-### Add Page
-1. Create in `src/app/(app)/[page]/page.tsx`
-2. Use Server Components for data fetching
-3. Add loading.tsx and error.tsx as needed
-
 ### Update Schema
 1. Edit `prisma/schema.prisma`
-2. Run `npx prisma db push`
-3. Run `npx prisma generate`
-4. Update shopify-app schema to match (shared database)
+2. Run `npx prisma db push && npx prisma generate`
+3. Update shopify-app schema to match

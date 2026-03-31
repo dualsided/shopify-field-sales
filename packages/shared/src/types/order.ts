@@ -1,6 +1,6 @@
 import type { PaymentTerms } from './company';
 
-export type OrderStatus = 'DRAFT' | 'PENDING' | 'PAID' | 'CANCELLED' | 'REFUNDED';
+export type OrderStatus = 'DRAFT' | 'AWAITING_REVIEW' | 'PENDING' | 'PAID' | 'CANCELLED' | 'REFUNDED';
 
 export interface Order {
   id: string;
@@ -51,6 +51,7 @@ export interface OrderLineItem {
   sku: string | null;
   title: string;
   variantTitle: string | null;
+  imageUrl: string | null;
   quantity: number;
   unitPriceCents: number;
   discountCents: number;
