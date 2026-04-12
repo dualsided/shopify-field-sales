@@ -2,7 +2,7 @@ import type { LoaderFunctionArgs, HeadersFunction } from "react-router";
 import { useLoaderData, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import prisma from "../db.server";
+import { prisma } from "@field-sales/database";
 import { getBillingDashboardData, PLAN_CONFIGS, type PlanConfig } from "../services/billing.server";
 import type { BillingPlan } from "@prisma/client";
 
@@ -221,50 +221,53 @@ export default function BillingPage() {
 
   return (
     <s-page heading="Billing">
-      {/* Status Banner */}
-      {status.isTrial && status.trialDaysRemaining !== null && (
-        <s-section>
-          <s-banner tone={status.trialDaysRemaining <= 3 ? "warning" : "info"}>
-            {status.trialDaysRemaining > 0
-              ? `Trial ends in ${status.trialDaysRemaining} day${status.trialDaysRemaining !== 1 ? "s" : ""}`
-              : "Trial has ended. Subscribe to continue using the app."}
-          </s-banner>
-        </s-section>
-      )}
 
       {/* Current Plan */}
       <s-section>
         <s-stack gap="base">
-          <s-heading>Current Plan</s-heading>
+          <s-stack direction="inline" gap="base" justifyContent="space-between">
+            <s-heading>Current Plan</s-heading>
+            <s-button variant="tertiary" href="/app/billing/subscribe">Change Plan</s-button>
+          </s-stack>
+
           <s-grid gap="base" gridTemplateColumns="1fr 1fr 1fr">
             <s-box padding="base" background="subdued" borderRadius="base">
               <s-stack gap="none">
                 <s-text color="subdued">Plan</s-text>
-                <s-text type="strong">{planConfig?.name || "None"}</s-text>
+                <s-heading>{planConfig?.name || "None"}</s-heading>
               </s-stack>
             </s-box>
             <s-box padding="base" background="subdued" borderRadius="base">
               <s-stack gap="none">
                 <s-text color="subdued">Base Price</s-text>
-                <s-text type="strong">
+                <s-heading>
                   {planConfig ? formatCents(planConfig.basePriceCents) : "$0"}/mo
-                </s-text>
+                </s-heading>
               </s-stack>
             </s-box>
             <s-box padding="base" background="subdued" borderRadius="base">
-              <s-stack gap="none">
+              <s-stack gap="small-500">
                 <s-text color="subdued">Status</s-text>
-                <s-badge
-                  tone={
-                    status.isActive
-                      ? "success"
-                      : status.status === "PAST_DUE"
-                        ? "warning"
-                        : "critical"
+                <s-stack direction="inline" gap="small-300">
+                  <s-badge
+                    tone={
+                      status.isActive
+                        ? "success"
+                        : status.status === "PAST_DUE"
+                          ? "warning"
+                          : "critical"
+                    }
+                  >
+                    {status.isTrial ? "Trial" : status.status}
+                  </s-badge>
+                  {status.isTrial &&
+                    <s-paragraph>
+                      <s-text tone={"info"} color="subdued">
+                        Ends in {status.trialDaysRemaining} day{status.trialDaysRemaining !== 1 ? "s" : ""}
+                      </s-text>
+                    </s-paragraph>
                   }
-                >
-                  {status.isTrial ? "Trial" : status.status}
-                </s-badge>
+                </s-stack>
               </s-stack>
             </s-box>
           </s-grid>
@@ -386,40 +389,6 @@ export default function BillingPage() {
         </s-section>
       )}
 
-      {/* Plan Comparison */}
-      <s-section>
-        <s-stack gap="base">
-          <s-heading>All Plans</s-heading>
-          <s-text color="subdued">
-            Contact support to change your plan.
-          </s-text>
-          <s-table>
-            <s-table-header-row>
-              <s-table-header>Plan</s-table-header>
-              <s-table-header>Included Reps</s-table-header>
-              <s-table-header>Per Rep</s-table-header>
-              <s-table-header>Base Price</s-table-header>
-              <s-table-header>Revenue Share</s-table-header>
-            </s-table-header-row>
-            <s-table-body>
-              {allPlans.map((plan) => (
-                <s-table-row key={plan.key}>
-                  <s-table-cell>
-                    {plan.name}
-                    {shop?.billingPlan === plan.key && (
-                      <s-badge tone="info">Current</s-badge>
-                    )}
-                  </s-table-cell>
-                  <s-table-cell>{plan.includedReps}</s-table-cell>
-                  <s-table-cell>{formatCents(plan.perRepCents)}</s-table-cell>
-                  <s-table-cell>{formatCents(plan.basePriceCents)}/mo</s-table-cell>
-                  <s-table-cell>{plan.revenueSharePercent}%</s-table-cell>
-                </s-table-row>
-              ))}
-            </s-table-body>
-          </s-table>
-        </s-stack>
-      </s-section>
     </s-page>
   );
 }

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { Prisma } from '.prisma/field-app-client';
+import { Prisma } from '@field-sales/database';
 import { prisma } from '@/lib/db/prisma';
 import { getAuthContext, requireRole } from '@/lib/auth';
 import type { ApiError, Company, CompanyListItem, CreateCompanyRequest, PaginatedResponse, PaymentTerms } from '@/types';

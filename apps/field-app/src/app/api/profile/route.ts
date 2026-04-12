@@ -91,6 +91,14 @@ export async function PUT(request: Request) {
         );
       }
 
+      // passwordHash may be null if user was created with SMS auth only
+      if (!rep.passwordHash) {
+        return NextResponse.json<ApiError>(
+          { data: null, error: { code: 'VALIDATION_ERROR', message: 'Cannot change password - account uses SMS authentication' } },
+          { status: 400 }
+        );
+      }
+
       const bcrypt = await import('bcryptjs');
       const isValid = await bcrypt.compare(body.currentPassword, rep.passwordHash);
 

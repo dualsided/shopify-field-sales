@@ -50,7 +50,10 @@ export async function GET() {
       lastMonthRevenue,
       accountCount,
       pendingOrders,
-      recentOrders,
+      draftOrdersList,
+      awaitingReviewOrders,
+      placedOrders,
+      latestCompanies,
       quota,
       paidRevenue,
       pendingRevenue,
@@ -122,11 +125,28 @@ export async function GET() {
         },
       }),
 
-      // Recent orders (last 5)
+      // Draft orders
       prisma.order.findMany({
         where: {
           shopId,
           ...repFilter,
+          status: 'DRAFT',
+          deletedAt: null,
+        },
+        orderBy: { updatedAt: 'desc' },
+        take: 5,
+        include: {
+          company: { select: { name: true } },
+        },
+      }),
+
+      // Awaiting review orders
+      prisma.order.findMany({
+        where: {
+          shopId,
+          ...repFilter,
+          status: 'AWAITING_REVIEW',
+          deletedAt: null,
         },
         orderBy: { createdAt: 'desc' },
         take: 5,
@@ -134,6 +154,57 @@ export async function GET() {
           company: { select: { name: true } },
         },
       }),
+
+      // Placed orders (PENDING, PAID, etc. - everything that's been submitted)
+      prisma.order.findMany({
+        where: {
+          shopId,
+          ...repFilter,
+          status: { in: ['PENDING', 'PAID', 'CANCELLED', 'REFUNDED'] },
+          deletedAt: null,
+        },
+        orderBy: { placedAt: 'desc' },
+        take: 5,
+        include: {
+          company: { select: { name: true } },
+        },
+      }),
+
+      // Latest companies (last 5 by creation date that rep has access to)
+      role === 'REP'
+        ? prisma.company.findMany({
+            where: {
+              shopId,
+              isActive: true,
+              OR: [
+                { assignedRepId: repId },
+                {
+                  territory: {
+                    repTerritories: { some: { repId } },
+                  },
+                },
+              ],
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 5,
+            select: {
+              id: true,
+              name: true,
+              accountNumber: true,
+              createdAt: true,
+            },
+          })
+        : prisma.company.findMany({
+            where: { shopId, isActive: true },
+            orderBy: { createdAt: 'desc' },
+            take: 5,
+            select: {
+              id: true,
+              name: true,
+              accountNumber: true,
+              createdAt: true,
+            },
+          }),
 
       // Quota for current month (only for REP role)
       role === 'REP'
@@ -218,6 +289,20 @@ export async function GET() {
           onPaceIndicator: 'no_quota' as QuotaPaceIndicator,
         };
 
+    // Helper to format order for response
+    const formatOrder = (o: typeof draftOrdersList[number]) => ({
+      id: o.id,
+      orderNumber: o.orderNumber,
+      shopifyOrderNumber: o.shopifyOrderNumber,
+      totalCents: o.totalCents,
+      currency: o.currency,
+      status: o.status,
+      placedAt: o.placedAt?.toISOString() || null,
+      createdAt: o.createdAt.toISOString(),
+      updatedAt: o.updatedAt.toISOString(),
+      companyName: o.company.name,
+    });
+
     const response = {
       metrics: {
         ordersThisMonth,
@@ -228,16 +313,16 @@ export async function GET() {
         pendingOrders,
         quota: role === 'REP' ? quotaProgress : null,
       },
-      recentOrders: recentOrders.map((o) => ({
-        id: o.id,
-        orderNumber: o.orderNumber,
-        shopifyOrderNumber: o.shopifyOrderNumber,
-        totalCents: o.totalCents,
-        currency: o.currency,
-        status: o.status,
-        placedAt: o.placedAt?.toISOString() || null,
-        createdAt: o.createdAt.toISOString(),
-        companyName: o.company.name,
+      orders: {
+        draft: draftOrdersList.map(formatOrder),
+        awaitingReview: awaitingReviewOrders.map(formatOrder),
+        placed: placedOrders.map(formatOrder),
+      },
+      latestCompanies: latestCompanies.map((c) => ({
+        id: c.id,
+        name: c.name,
+        accountNumber: c.accountNumber,
+        createdAt: c.createdAt.toISOString(),
       })),
     };
 

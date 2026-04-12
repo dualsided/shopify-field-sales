@@ -3,7 +3,7 @@ import { useLoaderData, useNavigate, useActionData, Form } from "react-router";
 import { useState } from "react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import prisma from "../db.server";
+import { prisma } from "@field-sales/database";
 import { alignLocationToTerritory } from "../services/company.server";
 
 interface SalesRep {

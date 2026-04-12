@@ -50,8 +50,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const phone = formData.get("phone") as string | null;
   const role = formData.get("role") as string | null;
   const territoryIdsStr = formData.get("territoryIds") as string | null;
+  const requiresOrderApproval = formData.get("requiresOrderApproval") === "true";
+  const approvalThresholdDollars = formData.get("approvalThresholdDollars") as string | null;
 
   const territoryIds = territoryIdsStr ? JSON.parse(territoryIdsStr) : [];
+
+  // Convert form values to approvalThresholdCents
+  // If approval not required, set to null (trusted rep)
+  // Otherwise, convert dollars to cents
+  const approvalThresholdCents = requiresOrderApproval
+    ? Math.round(parseFloat(approvalThresholdDollars || "0") * 100)
+    : null;
 
   if (!firstName || !lastName || !email) {
     return { error: "First name, last name, and email are required" };
@@ -65,6 +74,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     phone: phone || null,
     role: (role as RepRole) || "REP",
     territoryIds,
+    approvalThresholdCents,
   });
 
   if (result.success) {
@@ -99,6 +109,8 @@ export default function NewSalesRepPage() {
         phone: data.phone || "",
         role: data.role,
         territoryIds: JSON.stringify(data.territoryIds),
+        requiresOrderApproval: data.requiresOrderApproval.toString(),
+        approvalThresholdDollars: data.approvalThresholdDollars,
       },
       { method: "POST" }
     );
@@ -124,7 +136,6 @@ export default function NewSalesRepPage() {
           territories={territories}
           onSubmit={handleSubmit}
           onCancel={() => navigate("/app/reps")}
-          actionError={fetcher.data?.error}
         />
       </s-section>
     </s-page>

@@ -1,10 +1,16 @@
 {
   "name": "shopify-field-sales",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "private": true
+    "db:generate": "npm run db:generate --workspace=@field-sales/database",
+    "db:push": "npm run db:push --workspace=@field-sales/database",
+    "db:migrate": "npm run db:migrate --workspace=@field-sales/database",
+    "db:seed": "npm run db:seed --workspace=@field-sales/database",
+    "db:studio": "npm run db:studio --workspace=@field-sales/database"
+  }
 }

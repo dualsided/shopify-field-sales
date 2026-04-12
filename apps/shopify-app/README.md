@@ -85,7 +85,7 @@ app/
 │   ├── app.territories.$id.tsx     # Territory details
 │   ├── app.companies._index.tsx    # Companies list
 │   ├── app.companies.$id.tsx       # Company details
-│   ├── app.products._index.tsx     # Products management
+│   ├── app.settings.products.tsx     # Products management
 │   ├── app.orders._index.tsx       # Orders list
 │   ├── app.orders.$id.tsx          # Order details
 │   └── webhooks.*.tsx              # Webhook handlers

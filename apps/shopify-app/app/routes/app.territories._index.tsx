@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import prisma from "../db.server";
+import { prisma } from "@field-sales/database";
 import {
   getTerritories,
   getTerritoryAlignmentReport,

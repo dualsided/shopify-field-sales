@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { Prisma } from '.prisma/field-app-client';
+import { Prisma } from '@field-sales/database';
 import { prisma } from '@/lib/db/prisma';
 import { requireRole } from '@/lib/auth';
 import { hashPassword } from '@/lib/auth';

@@ -3,6 +3,22 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    /* Default primary colors (indigo) - overridden by BrandingProvider */
+    --color-primary-50: hsl(226, 100%, 97%);
+    --color-primary-100: hsl(226, 100%, 94%);
+    --color-primary-200: hsl(226, 100%, 86%);
+    --color-primary-300: hsl(226, 100%, 74%);
+    --color-primary-400: hsl(226, 100%, 58%);
+    --color-primary-500: hsl(239, 84%, 67%);
+    --color-primary-600: hsl(239, 84%, 60%);
+    --color-primary-700: hsl(239, 84%, 50%);
+    --color-primary-800: hsl(239, 84%, 40%);
+    --color-primary-900: hsl(239, 84%, 30%);
+    --color-primary-950: hsl(239, 84%, 20%);
+    --color-accent: #4F46E5;
+  }
+
   html {
     -webkit-tap-highlight-color: transparent;
   }
@@ -14,7 +30,7 @@
 
 @layer components {
   .btn {
-    @apply inline-flex items-center justify-center min-h-touch px-4 py-2 font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2;
+    @apply inline-flex items-center justify-center min-h-9 px-3 py-1.5 font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2;
   }
 
   .btn-primary {
@@ -30,7 +46,45 @@
   }
 
   .card {
-    @apply bg-white rounded-xl shadow-sm border border-gray-100 p-4;
+    @apply bg-white rounded-xl shadow-md border border-gray-100 p-4;
+  }
+
+  .card-interactive {
+    @apply card active:bg-gray-50 transition-colors;
+  }
+
+  /* Status badges */
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-draft {
+    @apply badge bg-amber-100 text-amber-700;
+  }
+
+  .badge-awaiting {
+    @apply badge bg-blue-100 text-blue-700;
+  }
+
+  .badge-pending {
+    @apply badge bg-yellow-100 text-yellow-700;
+  }
+
+  .badge-paid {
+    @apply badge bg-green-100 text-green-700;
+  }
+
+  .badge-cancelled {
+    @apply badge bg-red-100 text-red-700;
+  }
+
+  .badge-default {
+    @apply badge bg-gray-100 text-gray-600;
+  }
+
+  /* Link styles */
+  .link {
+    @apply text-primary-600 font-medium hover:text-primary-700;
   }
 }
 
@@ -41,5 +95,36 @@
 
   .safe-top {
     padding-top: env(safe-area-inset-top);
+  }
+
+  .animate-slide-up {
+    animation: slide-up 0.3s ease-out;
+  }
+
+  .animate-shake {
+    animation: shake 0.6s ease-in-out;
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes shake {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  14%, 42%, 70% {
+    transform: translateX(-3px);
+  }
+  28%, 56%, 84% {
+    transform: translateX(3px);
   }
 }

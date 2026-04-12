@@ -68,17 +68,19 @@ return NextResponse.json<ApiError>(
 - Never expose data across tenants
 
 ### Database
-- Shared with shopify-app
-- Custom Prisma client: `./node_modules/.prisma/field-app-client`
-- Import types from `.prisma/field-app-client`
+- Uses shared `@field-sales/database` package
+- Schema lives in `packages/database/prisma/schema.prisma`
+- Import Prisma client and types from `@field-sales/database`
+
+```typescript
+import { prisma } from '@/lib/db/prisma';
+import type { Company, Order } from '@field-sales/database';
+```
 
 ## Quick Commands
 
 ```bash
 npm run dev           # Start dev server (port 3001)
-npm run db:push       # Push schema changes
-npm run db:generate   # Regenerate Prisma client
-npm run db:seed       # Seed sample data
 ```
 
 ## Common Tasks
@@ -89,7 +91,87 @@ npm run db:seed       # Seed sample data
 3. Filter by `shopId` in all queries
 4. Return `{ data, error }` format
 
-### Update Schema
-1. Edit `prisma/schema.prisma`
-2. Run `npx prisma db push && npx prisma generate`
-3. Update shopify-app schema to match
+## Database Management
+
+**IMPORTANT:** Both apps share a single database schema. All schema changes are made in `packages/database/prisma/schema.prisma`.
+
+### Schema Location
+```
+packages/database/
+├── prisma/
+│   ├── schema.prisma    # THE schema (edit this)
+│   ├── migrations/      # Migration history
+│   └── seed.ts          # Seed data
+└── src/
+    ├── client.ts        # Prisma client singleton
+    └── index.ts         # Exports client + types
+```
+
+### Database Commands (run from monorepo root)
+```bash
+npm run db:push       # Push schema changes (dev - no migration)
+npm run db:migrate    # Create migration (production)
+npm run db:generate   # Regenerate Prisma client only
+npm run db:seed       # Seed sample data
+npm run db:studio     # Open Prisma Studio GUI
+```
+
+### How to Update the Schema
+
+1. **Edit the schema:**
+   ```bash
+   # Edit packages/database/prisma/schema.prisma
+   ```
+
+2. **Push changes to database (development):**
+   ```bash
+   cd /path/to/shopify-field-sales
+   npm run db:push
+   ```
+
+3. **Both apps automatically get the updated types** - the Prisma client is regenerated and shared via the `@field-sales/database` package.
+
+### Adding a New Model
+
+1. Add the model to `packages/database/prisma/schema.prisma`:
+   ```prisma
+   model NewModel {
+     id        String   @id @default(cuid())
+     shopId    String
+     name      String
+     createdAt DateTime @default(now())
+     updatedAt DateTime @updatedAt
+
+     shop Shop @relation(fields: [shopId], references: [id])
+
+     @@index([shopId])
+     @@map("new_models")
+   }
+   ```
+
+2. Add the relation to Shop model if needed:
+   ```prisma
+   model Shop {
+     // ... existing fields
+     newModels NewModel[]
+   }
+   ```
+
+3. Run `npm run db:push` from monorepo root
+
+4. Import and use in either app:
+   ```typescript
+   import type { NewModel } from '@field-sales/database';
+   ```
+
+### Adding a Field to Existing Model
+
+1. Edit `packages/database/prisma/schema.prisma`
+2. Run `npm run db:push` from monorepo root
+3. Use the new field immediately - types are auto-updated
+
+### Resetting the Database (dev only)
+```bash
+cd packages/database
+npx prisma migrate reset  # Drops all data, re-runs migrations + seed
+```

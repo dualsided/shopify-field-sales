@@ -1,11 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useAppBridge, SaveBar } from "@shopify/app-bridge-react";
 
-interface SalesRep {
-  id: string;
-  name: string;
-}
-
 interface StateOption {
   code: string;
   name: string;
@@ -16,7 +11,6 @@ export interface TerritoryFormData {
   description: string;
   stateCodes: string[];
   zipcodes: string[];
-  repIds: string[];
 }
 
 interface TerritoryData {
@@ -25,12 +19,10 @@ interface TerritoryData {
   description: string | null;
   stateCodes: string[];
   zipcodes: string[];
-  repIds: string[];
 }
 
 interface TerritoryFormProps {
   territory?: TerritoryData;
-  reps: SalesRep[];
   states: readonly StateOption[];
   onSubmit: (data: TerritoryFormData) => void;
   onCancel: () => void;
@@ -42,7 +34,6 @@ const defaultValues: TerritoryFormData = {
   description: "",
   stateCodes: [],
   zipcodes: [],
-  repIds: [],
 };
 
 function territoryToFormData(territory?: TerritoryData): TerritoryFormData {
@@ -52,20 +43,17 @@ function territoryToFormData(territory?: TerritoryData): TerritoryFormData {
     description: territory.description || "",
     stateCodes: territory.stateCodes || [],
     zipcodes: territory.zipcodes || [],
-    repIds: territory.repIds || [],
   };
 }
 
 export function TerritoryForm({
   territory,
-  reps,
   states,
   onSubmit,
   onCancel,
   actionError,
 }: TerritoryFormProps) {
   const shopify = useAppBridge();
-  const isEdit = !!territory?.id;
 
   // Store initial values in a ref so they're stable across renders
   const initialValuesRef = useRef<TerritoryFormData>(territoryToFormData(territory));
@@ -171,15 +159,6 @@ export function TerritoryForm({
     updateField("zipcodes", formData.zipcodes.filter(z => z !== zip));
   }, [formData.zipcodes, updateField]);
 
-  // Toggle rep selection
-  const toggleRep = useCallback((repId: string, checked: boolean) => {
-    if (checked) {
-      updateField("repIds", [...formData.repIds, repId]);
-    } else {
-      updateField("repIds", formData.repIds.filter((r) => r !== repId));
-    }
-  }, [formData.repIds, updateField]);
-
   // Available states (not yet selected)
   const availableStates = useMemo(() => {
     return filteredStates.filter(s => !formData.stateCodes.includes(s.code));
@@ -193,169 +172,144 @@ export function TerritoryForm({
       </SaveBar>
 
       <s-stack gap="base">
-        {actionError && (
-          <s-banner tone="critical">{actionError}</s-banner>
-        )}
-
-        <s-text-field
-          label="Territory Name"
-          value={formData.name}
-          onInput={(e: Event) => {
-            const target = e.target as HTMLInputElement;
-            updateField("name", target.value);
-          }}
-          required
-        />
-
-        <s-text-field
-          label="Description"
-          value={formData.description}
-          onInput={(e: Event) => {
-            const target = e.target as HTMLInputElement;
-            updateField("description", target.value);
-          }}
-        />
-
-        {/* States Multi-Select */}
-        <s-stack gap="base">
-          <s-stack gap="none">
-            <s-text>States</s-text>
-            <s-text color="subdued">
-              Select states to include in this territory
-            </s-text>
-          </s-stack>
-
-          {/* Selected States Chips */}
-          {selectedStates.length > 0 && (
-            <s-stack direction="inline" gap="small-200">
-              {selectedStates.map((state) => (
-                <s-badge key={state.code} tone="info">
-                  <s-text>{state.name}</s-text>
-                  <s-button onClick={() => removeState(state.code)} variant="tertiary" icon="delete" />
-                </s-badge>
-              ))}
-            </s-stack>
+        <s-section>
+          {actionError && (
+            <s-banner tone="critical">{actionError}</s-banner>
           )}
 
-          {/* State Search Input */}
           <s-text-field
-            label="Search states"
-            labelAccessibilityVisibility="exclusive"
-            placeholder="Search and select states..."
-            autocomplete={"off"}
-            value={stateSearch}
+            label="Territory Name"
+            value={formData.name}
             onInput={(e: Event) => {
               const target = e.target as HTMLInputElement;
-              setStateSearch(target.value);
-              setShowStateDropdown(true);
+              updateField("name", target.value);
             }}
-            onFocus={() => setShowStateDropdown(true)}
-            onBlur={() => {
-              // Delay hiding to allow click on option
-              setTimeout(() => setShowStateDropdown(false), 200);
-            }}
+            required
           />
 
-          {/* Dropdown */}
-          {showStateDropdown && availableStates.length > 0 && (
-            <s-box background="subdued" borderRadius="base" padding="small-500">
-              <div style={{ maxHeight: "300px", overflowY: "auto" }}>
-                <s-stack gap="none">
-                  {availableStates.map((state) => (
-                    <s-button
-                      key={state.code}
-                      variant="tertiary"
-                      onClick={() => addState(state.code)}
-                    >
-                      {state.name} ({state.code})
-                    </s-button>
-                  ))}
-                </s-stack>
-              </div>
-            </s-box>
-          )}
-        </s-stack>
-
-        {/* ZIP Codes with Chips */}
-        <s-stack gap="base">
-          <s-stack gap="none">
-            <s-text>ZIP Codes</s-text>
-            <s-text color="subdued">
-              Enter ZIP codes to include in this territory
-            </s-text>
-          </s-stack>
-
-          {/* Selected ZIP Code Chips */}
-          {formData.zipcodes.length > 0 && (
-            <s-stack direction="inline" gap="small-200">
-              {formData.zipcodes.map((zip) => (
-                <s-badge key={zip}>
-                  {zip}
-                  <s-button
-                    variant="tertiary"
-                    onClick={() => removeZipcode(zip)}
-                    icon="delete"
-                  />
-                </s-badge>
-              ))}
-            </s-stack>
-          )}
-
-          {/* ZIP Code Input */}
-          <div
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                addZipcode();
-              }
+          <s-text-field
+            label="Description"
+            value={formData.description}
+            onInput={(e: Event) => {
+              const target = e.target as HTMLInputElement;
+              updateField("description", target.value);
             }}
-          >
-            <s-text-field
-              label="Add ZIP code"
-              labelAccessibilityVisibility="exclusive"
-              placeholder="Enter ZIP code and press Enter..."
-              autocomplete={"off"}
-              value={zipcodeInput}
-              minLength={1}
-              maxLength={5}
-              error={zipcodeError || undefined}
-              onInput={(e: Event) => {
-                const target = e.target as HTMLInputElement;
-                setZipcodeInput(target.value);
-                if (zipcodeError) setZipcodeError("");
-              }}
-            />
-          </div>
-        </s-stack>
+          />
+        </s-section>
 
-        {reps.length > 0 && (
+        <s-section heading="Regions">
+          {/* States Multi-Select */}
           <s-stack gap="base">
             <s-stack gap="none">
-              <s-text>Assigned Sales Reps</s-text>
-              <s-text color="subdued">Select the reps who can access this territory</s-text>
+              <s-text>States</s-text>
+              <s-text color="subdued">
+                Select states to include in this territory
+              </s-text>
             </s-stack>
+
+            {/* Selected States Chips */}
+            {selectedStates.length > 0 && (
+              <s-stack direction="inline" gap="small-200">
+                {selectedStates.map((state) => (
+                  <s-badge key={state.code} tone="info">
+                    <s-text>{state.name}</s-text>
+                    <s-button onClick={() => removeState(state.code)} variant="tertiary" icon="delete" />
+                  </s-badge>
+                ))}
+              </s-stack>
+            )}
+
+            {/* State Search Input */}
+            <s-text-field
+              label="Search states"
+              labelAccessibilityVisibility="exclusive"
+              placeholder="Search and select states..."
+              autocomplete={"off"}
+              value={stateSearch}
+              onInput={(e: Event) => {
+                const target = e.target as HTMLInputElement;
+                setStateSearch(target.value);
+                setShowStateDropdown(true);
+              }}
+              onFocus={() => setShowStateDropdown(true)}
+              onBlur={() => {
+                // Delay hiding to allow click on option
+                setTimeout(() => setShowStateDropdown(false), 200);
+              }}
+            />
+
+            {/* Dropdown */}
+            {showStateDropdown && availableStates.length > 0 && (
+              <s-box background="subdued" borderRadius="base" padding="small-500">
+                <div style={{ maxHeight: "300px", overflowY: "auto" }}>
+                  <s-stack gap="none">
+                    {availableStates.map((state) => (
+                      <s-button
+                        key={state.code}
+                        variant="tertiary"
+                        onClick={() => addState(state.code)}
+                      >
+                        {state.name} ({state.code})
+                      </s-button>
+                    ))}
+                  </s-stack>
+                </div>
+              </s-box>
+            )}
+
+            {/* ZIP Codes with Chips */}
             <s-stack gap="base">
-              {reps.map((rep) => (
-                <s-checkbox
-                  key={rep.id}
-                  label={rep.name}
-                  value={rep.id}
-                  checked={formData.repIds.includes(rep.id)}
-                  onChange={(e: Event) => {
+              <s-stack gap="none">
+                <s-text>ZIP Codes</s-text>
+                <s-text color="subdued">
+                  Enter ZIP codes to include in this territory
+                </s-text>
+              </s-stack>
+
+              {/* Selected ZIP Code Chips */}
+              {formData.zipcodes.length > 0 && (
+                <s-stack direction="inline" gap="small-200">
+                  {formData.zipcodes.map((zip) => (
+                    <s-badge key={zip}>
+                      {zip}
+                      <s-button
+                        variant="tertiary"
+                        onClick={() => removeZipcode(zip)}
+                        icon="delete"
+                      />
+                    </s-badge>
+                  ))}
+                </s-stack>
+              )}
+
+              {/* ZIP Code Input */}
+              <div
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addZipcode();
+                  }
+                }}
+              >
+                <s-text-field
+                  label="Add ZIP code"
+                  labelAccessibilityVisibility="exclusive"
+                  placeholder="Enter ZIP code and press Enter..."
+                  autocomplete={"off"}
+                  value={zipcodeInput}
+                  minLength={1}
+                  maxLength={5}
+                  error={zipcodeError || undefined}
+                  onInput={(e: Event) => {
                     const target = e.target as HTMLInputElement;
-                    toggleRep(rep.id, target.checked);
+                    setZipcodeInput(target.value);
+                    if (zipcodeError) setZipcodeError("");
                   }}
                 />
-              ))}
+              </div>
             </s-stack>
           </s-stack>
-        )}
-
-        <s-button-group>
-          <s-button variant="secondary" onClick={onCancel}>
-            Cancel
-          </s-button>
-        </s-button-group>
+        </s-section>
       </s-stack>
     </>
   );

@@ -1,4 +1,4 @@
-/import prisma from "../db.server";
+import { prisma } from "@field-sales/database";
 import { toGid, fromGid } from "../lib/shopify-ids";
 
 // =============================================================================
@@ -141,6 +141,19 @@ const CUSTOMER_PAYMENT_METHODS_QUERY = `#graphql
 `;
 
 // =============================================================================
+// Contact Functions
+// =============================================================================
+
+/**
+ * Get a contact by ID
+ */
+export async function getContact(contactId: string) {
+  return prisma.companyContact.findUnique({
+    where: { id: contactId },
+  });
+}
+
+// =============================================================================
 // Customer Sync Functions
 // =============================================================================
 
@@ -280,6 +293,139 @@ async function findCustomerByEmail(
 }
 
 // =============================================================================
+// Customer Update Functions
+// =============================================================================
+
+/**
+ * Update a Shopify Customer when a contact's details change.
+ * Call this after updating a CompanyContact in the database.
+ */
+export async function updateShopifyCustomer(
+  contactId: string,
+  admin: ShopifyAdmin
+): Promise<{ success: true } | { success: false; error: string }> {
+  const contact = await prisma.companyContact.findUnique({
+    where: { id: contactId },
+  });
+
+  if (!contact) {
+    return { success: false, error: "Contact not found" };
+  }
+
+  if (!contact.shopifyCustomerId) {
+    // Contact not synced to Shopify yet - sync it first
+    const syncResult = await syncContactToShopifyCustomer(contactId, admin);
+    if (!syncResult.success) {
+      return syncResult;
+    }
+    // After sync, the contact now has a shopifyCustomerId, no need to update
+    return { success: true };
+  }
+
+  try {
+    const response = await admin.graphql(CUSTOMER_UPDATE_MUTATION, {
+      variables: {
+        input: {
+          id: toGid("Customer", contact.shopifyCustomerId),
+          firstName: contact.firstName,
+          lastName: contact.lastName,
+          email: contact.email,
+          phone: contact.phone || undefined,
+        },
+      },
+    });
+
+    const result: {
+      data?: {
+        customerUpdate?: {
+          customer?: { id: string };
+          userErrors?: Array<{ field: string[]; message: string }>;
+        };
+      };
+    } = await response.json();
+
+    if (result.data?.customerUpdate?.userErrors?.length) {
+      const errors = result.data.customerUpdate.userErrors;
+      console.error("Customer update errors:", errors);
+      return { success: false, error: errors.map((e) => e.message).join(", ") };
+    }
+
+    console.log(`[Customer Sync] Updated Shopify customer ${contact.shopifyCustomerId} for contact ${contactId}`);
+    return { success: true };
+  } catch (error) {
+    console.error("Error updating Shopify customer:", error);
+    return { success: false, error: "Failed to update customer in Shopify" };
+  }
+}
+
+/**
+ * Create or update a contact and sync to Shopify.
+ * This is the main entry point for contact management.
+ */
+export async function upsertContactWithShopifySync(
+  companyId: string,
+  contactData: {
+    id?: string; // If provided, update existing
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone?: string | null;
+    isPrimary?: boolean;
+  },
+  admin: ShopifyAdmin
+): Promise<{ success: true; contactId: string } | { success: false; error: string }> {
+  try {
+    let contact;
+
+    if (contactData.id) {
+      // Update existing contact
+      contact = await prisma.companyContact.update({
+        where: { id: contactData.id },
+        data: {
+          firstName: contactData.firstName,
+          lastName: contactData.lastName,
+          email: contactData.email.toLowerCase(),
+          phone: contactData.phone || null,
+          isPrimary: contactData.isPrimary ?? false,
+        },
+      });
+
+      // Sync update to Shopify
+      const syncResult = await updateShopifyCustomer(contact.id, admin);
+      if (!syncResult.success) {
+        console.error(`[Contact Upsert] Shopify sync failed for contact ${contact.id}:`, syncResult.error);
+        // Don't fail the operation - local update succeeded
+      }
+    } else {
+      // Create new contact
+      contact = await prisma.companyContact.create({
+        data: {
+          companyId,
+          firstName: contactData.firstName,
+          lastName: contactData.lastName,
+          email: contactData.email.toLowerCase(),
+          phone: contactData.phone || null,
+          isPrimary: contactData.isPrimary ?? false,
+          canPlaceOrders: true,
+        },
+      });
+
+      // Sync new contact to Shopify
+      const syncResult = await syncContactToShopifyCustomer(contact.id, admin);
+      if (!syncResult.success) {
+        console.error(`[Contact Upsert] Shopify sync failed for new contact ${contact.id}:`, syncResult.error);
+        // Don't fail the operation - local create succeeded
+      }
+    }
+
+    return { success: true, contactId: contact.id };
+  } catch (error) {
+    console.error("Error upserting contact:", error);
+    return { success: false, error: "Failed to save contact" };
+  }
+}
+
+// =============================================================================
 // Payment Method Functions
 // =============================================================================
 
@@ -347,6 +493,44 @@ export async function getCustomerPaymentMethods(
     console.error("Error fetching payment methods:", error);
     return { success: false, error: "Failed to fetch payment methods" };
   }
+}
+
+// Database Payment Method type (from our PaymentMethod table)
+export interface StoredPaymentMethod {
+  id: string;  // Internal CUID - use this for processOrderPayment
+  provider: string;
+  externalMethodId: string; // Shopify's payment method ID
+  last4: string | null;
+  brand: string | null;
+  expiryMonth: number | null;
+  expiryYear: number | null;
+  isDefault: boolean;
+}
+
+// Get payment methods from our database for a contact
+// Returns internal IDs that can be used with processOrderPayment
+export async function getStoredPaymentMethods(contactId: string): Promise<StoredPaymentMethod[]> {
+  const methods = await prisma.paymentMethod.findMany({
+    where: {
+      contactId,
+      isActive: true,
+    },
+    orderBy: [
+      { isDefault: "desc" },
+      { createdAt: "desc" },
+    ],
+  });
+
+  return methods.map((m) => ({
+    id: m.id,
+    provider: m.provider,
+    externalMethodId: m.externalMethodId,
+    last4: m.last4,
+    brand: m.brand,
+    expiryMonth: m.expiryMonth,
+    expiryYear: m.expiryYear,
+    isDefault: m.isDefault,
+  }));
 }
 
 // Get full customer details with payment methods

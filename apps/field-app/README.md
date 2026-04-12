@@ -55,10 +55,6 @@ NEXT_PUBLIC_APP_URL="http://localhost:3001"
 
 # Shopify (for webhooks)
 SHOPIFY_API_SECRET=""
-
-# Stripe (optional)
-STRIPE_SECRET_KEY=""
-STRIPE_WEBHOOK_SECRET=""
 ```
 
 ### Development
@@ -89,12 +85,12 @@ src/
 ├── app/                    # Next.js App Router
 │   ├── (app)/             # Authenticated routes
 │   │   ├── dashboard/     # Dashboard page
-│   │   ├── accounts/      # Company management
+│   │   ├── companies/     # Company management
 │   │   ├── orders/        # Order history
-│   │   └── settings/      # User settings
+│   │   └── account/       # Sales rep account
 │   ├── api/               # API routes
 │   │   ├── auth/          # Authentication endpoints
-│   │   ├── accounts/      # Company API
+│   │   ├── companies/     # Company API
 │   │   ├── cart/          # Cart operations
 │   │   ├── orders/        # Order management
 │   │   ├── products/      # Product catalog
@@ -102,7 +98,7 @@ src/
 │   └── login/             # Login page
 ├── components/            # React components
 │   ├── ui/               # Base UI components
-│   ├── accounts/         # Account-related components
+│   ├── companies/        # Company-related components
 │   ├── cart/             # Cart components
 │   └── orders/           # Order components
 ├── lib/                   # Shared utilities
@@ -113,7 +109,7 @@ src/
 │   └── utils/            # General utilities
 ├── services/             # Business logic
 │   ├── product-sync.ts   # Product synchronization
-│   └── promotion-engine.ts # Discount calculations
+│   └── promotions.ts       # Discount calculations
 ├── types/                # TypeScript definitions
 └── proxy.ts              # Auth middleware
 ```
@@ -153,8 +149,8 @@ src/
 | `/api/auth/refresh` | POST | Refresh JWT token |
 | `/api/auth/logout` | POST | End session |
 | `/api/dashboard` | GET | Dashboard metrics |
-| `/api/accounts` | GET | List companies |
-| `/api/accounts/[id]` | GET | Company details |
+| `/api/companies` | GET | List companies |
+| `/api/companies/[id]` | GET | Company details |
 | `/api/products` | GET | Product catalog |
 | `/api/cart` | GET/POST/PATCH/DELETE | Cart operations |
 | `/api/orders` | GET/POST | List/create orders |
@@ -165,7 +161,7 @@ src/
 Each Shopify store is a tenant (`shopId`). All queries are scoped by:
 1. `shopId` - from the rep's session
 2. `repId` - the authenticated rep
-3. `role` - determines data access (rep sees assigned accounts, admin sees all)
+3. `role` - determines data access (rep sees assigned companies, admin sees all)
 
 ## Development Login
 

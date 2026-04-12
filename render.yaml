@@ -61,10 +61,6 @@ services:
         value: 7d
       - key: NEXT_PUBLIC_APP_URL
         sync: false
-      - key: STRIPE_SECRET_KEY
-        sync: false
-      - key: STRIPE_WEBHOOK_SECRET
-        sync: false
 
 databases:
   - name: field-sales-db

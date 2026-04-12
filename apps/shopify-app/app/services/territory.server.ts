@@ -1,4 +1,4 @@
-import prisma from "../db.server";
+import { prisma } from "@field-sales/database";
 
 // US States for dropdown
 export const US_STATES = [
@@ -386,6 +386,18 @@ export async function updateTerritory(
   }
 }
 
+/**
+ * Update only the sales rep assignments for a territory.
+ * This is a convenience function that wraps updateTerritory.
+ */
+export async function updateTerritoryReps(
+  shopId: string,
+  territoryId: string,
+  repIds: string[]
+): Promise<{ success: true } | { success: false; error: string }> {
+  return updateTerritory(shopId, territoryId, { repIds });
+}
+
 export async function deactivateTerritory(
   shopId: string,
   territoryId: string
@@ -433,6 +445,49 @@ export async function activateTerritory(
   } catch (error) {
     console.error("Error activating territory:", error);
     return { success: false, error: "Failed to activate territory" };
+  }
+}
+
+/**
+ * Permanently delete a territory. Only inactive territories can be deleted.
+ */
+export async function deleteTerritory(
+  shopId: string,
+  territoryId: string
+): Promise<{ success: true } | { success: false; error: string }> {
+  const territory = await prisma.territory.findFirst({
+    where: { id: territoryId, shopId },
+  });
+
+  if (!territory) {
+    return { success: false, error: "Territory not found" };
+  }
+
+  if (territory.isActive) {
+    return { success: false, error: "Cannot delete an active territory. Deactivate it first." };
+  }
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Delete related records first
+      await tx.territoryState.deleteMany({ where: { territoryId } });
+      await tx.territoryZipcode.deleteMany({ where: { territoryId } });
+      await tx.repTerritory.deleteMany({ where: { territoryId } });
+
+      // Clear territory from any locations
+      await tx.companyLocation.updateMany({
+        where: { territoryId },
+        data: { territoryId: null },
+      });
+
+      // Delete the territory
+      await tx.territory.delete({ where: { id: territoryId } });
+    });
+
+    return { success: true };
+  } catch (error) {
+    console.error("Error deleting territory:", error);
+    return { success: false, error: "Failed to delete territory" };
   }
 }
 

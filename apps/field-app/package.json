@@ -7,26 +7,22 @@
     "build": "next build",
     "start": "next start --port 3001",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit",
-    "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev",
-    "db:push": "prisma db push",
-    "db:seed": "npx tsx prisma/seed.ts"
+    "typecheck": "tsc --noEmit"
   },
   "prisma": {
-    "seed": "npx tsx prisma/seed.ts"
+    "schema": "../../packages/database/prisma/schema.prisma"
   },
   "dependencies": {
+    "@field-sales/database": "*",
     "@field-sales/shared": "*",
-    "@prisma/client": "^6.16.0",
-    "@stripe/stripe-js": "^8.8.0",
     "bcryptjs": "^2.4.3",
     "ioredis": "^5.4.1",
     "jose": "^5.9.6",
+    "lucide-react": "^1.8.0",
     "next": "^16.1.6",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "stripe": "^20.4.0"
+    "twilio": "^5.13.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.5",

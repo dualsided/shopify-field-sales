@@ -43,7 +43,17 @@ export async function POST(request: Request) {
       );
     }
 
-    // Verify password
+    // Verify password (passwordHash may be null if using SMS auth only)
+    if (!rep.passwordHash) {
+      return NextResponse.json<ApiError>(
+        {
+          data: null,
+          error: { code: 'INVALID_CREDENTIALS', message: 'Password login not enabled for this account' },
+        },
+        { status: 401 }
+      );
+    }
+
     const isValidPassword = await verifyPassword(password, rep.passwordHash);
     if (!isValidPassword) {
       return NextResponse.json<ApiError>(

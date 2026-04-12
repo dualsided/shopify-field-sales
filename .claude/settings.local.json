@@ -53,7 +53,28 @@
       "Bash(rm:*)",
       "Bash(npx prisma db execute:*)",
       "Bash(PGPASSWORD=R373br9uoxmd psql:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(node --version)",
+      "Bash(npm --version:*)",
+      "Bash(lsof -i :3000)",
+      "Bash(shopify version:*)",
+      "Bash(DEBUG=*)",
+      "Bash(shopify app dev)",
+      "Bash(shopify app dev:*)",
+      "Bash(timeout 90 shopify app dev:*)",
+      "Bash(npm rebuild:*)",
+      "Bash(node:*)",
+      "Bash(xargs:*)",
+      "Bash(npm run db:push:*)",
+      "Bash(npm run db:generate:*)",
+      "Bash(echo:*)",
+      "Bash(tree:*)",
+      "Bash(npx prisma migrate dev:*)",
+      "Bash(DATABASE_URL=\"postgresql://postgres:R373br9uoxmd@localhost:5432/field_sales_manager\" npx prisma migrate dev:*)",
+      "Bash(DATABASE_URL=\"postgresql://postgres:R373br9uoxmd@localhost:5432/field_sales_manager\" npx prisma migrate reset:*)",
+      "Bash(DATABASE_URL=\"postgresql://postgres:R373br9uoxmd@localhost:5432/field_sales_manager\" npx prisma migrate diff:*)",
+      "Bash(DATABASE_URL=\"postgresql://postgres:R373br9uoxmd@localhost:5432/field_sales_manager\" npx prisma migrate resolve:*)",
+      "Bash(DATABASE_URL=\"postgresql://postgres:R373br9uoxmd@localhost:5432/field_sales_manager\" npx prisma migrate status:*)"
     ]
   }
 }

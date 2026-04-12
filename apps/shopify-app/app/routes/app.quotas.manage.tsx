@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import prisma from "../db.server";
+import { prisma } from "@field-sales/database";
 import { bulkUpsertQuotas } from "../services/quota.server";
 import { getActiveSalesReps } from "../services/salesRep.server";
 
@@ -246,6 +246,9 @@ export default function QuotasManagePage() {
       </s-button>
       <s-link slot="secondary-actions" href={`/app/quotas?year=${year}&month=${month}`}>
         Cancel
+      </s-link>
+      <s-link slot="secondary-actions" href="/app/quotas/plan">
+        Plan Multiple Months
       </s-link>
 
       <s-box paddingBlock="base">

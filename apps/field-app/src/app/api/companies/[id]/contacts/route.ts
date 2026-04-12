@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
-import { requireRole } from '@/lib/auth';
+import { getAuthContext, requireRole } from '@/lib/auth';
 import type { ApiError, CompanyContact } from '@/types';
 
 interface RouteParams {
@@ -17,29 +17,21 @@ interface CreateContactRequest {
   canPlaceOrders?: boolean;
 }
 
-// GET: List contacts for a company
+// GET: List contacts for a company (all authenticated users)
 export async function GET(_request: Request, { params }: RouteParams) {
   try {
-    const { shopId } = await requireRole('ADMIN', 'MANAGER');
+    const { shopId } = await getAuthContext();
     const { id: companyId } = await params;
 
     // Verify company exists and belongs to shop
     const company = await prisma.company.findFirst({
-      where: { id: companyId, shopId },
+      where: { id: companyId, shopId, isActive: true },
     });
 
     if (!company) {
       return NextResponse.json<ApiError>(
         { data: null, error: { code: 'NOT_FOUND', message: 'Company not found' } },
         { status: 404 }
-      );
-    }
-
-    // Only allow contact management for internal companies
-    if (company.shopifyCompanyId) {
-      return NextResponse.json<ApiError>(
-        { data: null, error: { code: 'FORBIDDEN', message: 'Contacts for Shopify-managed companies are managed in Shopify Admin' } },
-        { status: 403 }
       );
     }
 

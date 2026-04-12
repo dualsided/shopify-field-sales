@@ -1,5 +1,6 @@
-import prisma from "../db.server";
+import { prisma } from "@field-sales/database";
 import { alignLocationToTerritory } from "./company.server";
+import { syncCompanyDetails } from "./companySync.server";
 import type { ProductStatus } from "@prisma/client";
 
 // Shopify Company webhook payload types
@@ -79,34 +80,9 @@ export async function processCompanyWebhook(
       return { success: true };
     }
 
-    // Create or update company
-    await prisma.company.upsert({
-      where: {
-        shopId_shopifyCompanyId: {
-          shopId: shop.id,
-          shopifyCompanyId,
-        },
-      },
-      create: {
-        shopId: shop.id,
-        shopifyCompanyId,
-        name: payload.name,
-        accountNumber: payload.external_id || null,
-        syncStatus: "SYNCED",
-        lastSyncedAt: new Date(),
-        isActive: true,
-      },
-      update: {
-        name: payload.name,
-        accountNumber: payload.external_id || undefined,
-        syncStatus: "SYNCED",
-        lastSyncedAt: new Date(),
-        isActive: true,
-      },
-    });
-
-    console.log(`[Webhook] Company ${shopifyCompanyId} upserted: ${payload.name}`);
-    return { success: true };
+    // For create/update, fetch full details including contacts, locations, and payment methods
+    console.log(`[Webhook] Syncing full company details for ${shopifyCompanyId}`);
+    return await syncCompanyDetails(shopDomain, shopifyCompanyId);
   } catch (error) {
     console.error(`[Webhook] Error processing company:`, error);
     return { success: false, error: String(error) };

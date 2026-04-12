@@ -8,6 +8,43 @@ Companies represent B2B customers with multiple locations and contacts. Companie
 - **Shopify-managed**: Synced from Shopify B2B (Shopify Plus)
 - **App-managed**: Created directly in the app
 
+## Structure
+
+The company structure mirrors Shopify's B2B model:
+
+```
+Company
+│
+├── Contacts (who buys)
+│   ├── Contact info (name, email, phone)
+│   ├── → Shopify Company Contact
+│   └── → Shopify Customer (for payment methods)
+│
+└── Locations (where to ship)
+    ├── Address info (street, city, state, zip)
+    ├── → Shopify Company Location
+    └── → Territory (auto-assigned by address)
+```
+
+## Shopify B2B Mapping
+
+| App Entity | Shopify B2B Entity | Purpose |
+|------------|-------------------|---------|
+| `Company` | Company | B2B account/organization |
+| `CompanyLocation` | Company Location | Shipping/billing addresses |
+| `CompanyContact` | Company Contact | Person at the company |
+| `CompanyContact.shopifyCustomerId` | Customer | Payment methods, order history |
+
+### Why Two Shopify Records for Contacts?
+
+In Shopify B2B:
+- **Company Contact** = Person associated with a company
+- **Customer** = The account that can have payment methods and place orders
+
+A contact links to both:
+- `shopifyContactId` → The Company Contact record
+- `shopifyCustomerId` → The Customer record (for payment method vaulting)
+
 ## Data Model
 
 ### Company
@@ -124,21 +161,87 @@ const isShopifyManaged = company.shopifyCompanyId !== null;
 | `importCompaniesFromShopify(...)` | Bulk import from Shopify |
 | `alignLocationToTerritory(...)` | Assign location to territory |
 
-## Customer Sync
+## Usage in Orders
 
-Contacts can be synced to Shopify as customers for payment method vaulting:
+When creating an order, both contacts and locations are referenced:
 
 ```typescript
-import { syncContactToShopifyCustomer } from "~/services/customer.server";
-
-const result = await syncContactToShopifyCustomer(contactId, admin);
-// { success: true, shopifyCustomerId: "12345" }
+Order {
+  companyId           // The company
+  contactId           // Who is buying (receives invoice, has payment method)
+  shippingLocationId  // Where to ship
+  billingLocationId   // Billing address
+}
 ```
 
-See [customer.server.ts](../app/services/customer.server.ts) for:
-- `syncContactToShopifyCustomer()` - Create/link Shopify customer
-- `getContactPaymentMethods()` - Get saved payment methods
-- `syncCompanyContactsToShopify()` - Bulk sync all contacts
+**Contact** → Determines:
+- Who receives the invoice email
+- Which Shopify Customer is linked (for payment methods)
+- Order attribution in Shopify
+
+**Location** → Determines:
+- Shipping address on the order
+- Which territory the order falls under
+- Which sales reps have access
+
+## Customer Sync
+
+Contacts are synced to Shopify as Customers for payment method vaulting and order attribution.
+
+### Sync Flow
+
+```
+Create Contact → syncContactToShopifyCustomer() → Shopify Customer created
+                                                         ↓
+                                                   shopifyCustomerId saved
+
+Update Contact → updateShopifyCustomer() → Shopify Customer updated
+```
+
+### Automatic Sync
+
+Use `upsertContactWithShopifySync()` for automatic sync on create/update:
+
+```typescript
+import { upsertContactWithShopifySync } from "~/services/customer.server";
+
+// Create new contact (syncs to Shopify automatically)
+const result = await upsertContactWithShopifySync(companyId, {
+  firstName: "John",
+  lastName: "Doe",
+  email: "john@example.com",
+  phone: "555-1234",
+  isPrimary: true,
+}, admin);
+
+// Update existing contact (syncs to Shopify automatically)
+const result = await upsertContactWithShopifySync(companyId, {
+  id: existingContactId,
+  firstName: "John",
+  lastName: "Smith", // Changed
+  email: "john@example.com",
+}, admin);
+```
+
+### Manual Sync Functions
+
+| Function | Description |
+|----------|-------------|
+| `syncContactToShopifyCustomer(contactId, admin)` | Create/link Shopify Customer |
+| `updateShopifyCustomer(contactId, admin)` | Update existing Shopify Customer |
+| `syncCompanyContactsToShopify(companyId, admin)` | Bulk sync all contacts |
+| `getContactPaymentMethods(contactId, admin)` | Get saved payment methods |
+
+### What Gets Synced
+
+| Contact Field | Shopify Customer Field |
+|---------------|------------------------|
+| `firstName` | `firstName` |
+| `lastName` | `lastName` |
+| `email` | `email` |
+| `phone` | `phone` |
+
+**Note:** Payment methods are managed entirely in Shopify and read-only from the app.
 
 ## Rep Assignment
 

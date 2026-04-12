@@ -1,4 +1,4 @@
-import prisma from "../db.server";
+import { prisma } from "@field-sales/database";
 import type { RepRole } from "@prisma/client";
 
 // Types
@@ -20,8 +20,9 @@ export interface SalesRepDetail {
   lastName: string;
   email: string;
   phone: string | null;
-  role: "REP" | "MANAGER";
+  role: "REP" | "MANAGER" | "ADMIN";
   isActive: boolean;
+  approvalThresholdCents: number | null;
   createdAt: string;
   territories: AssignedTerritory[];
   companies: AssignedCompany[];  // Directly assigned companies via assignedRepId
@@ -60,6 +61,7 @@ export interface CreateSalesRepInput {
   phone?: string | null;
   role?: RepRole;
   territoryIds?: string[];
+  approvalThresholdCents?: number | null;
 }
 
 export interface UpdateSalesRepInput {
@@ -69,6 +71,7 @@ export interface UpdateSalesRepInput {
   phone?: string | null;
   role?: RepRole;
   territoryIds?: string[];
+  approvalThresholdCents?: number | null;
 }
 
 // Queries
@@ -77,7 +80,7 @@ export async function getSalesReps(shopId: string): Promise<SalesRepListItem[]> 
     where: { shopId },
     include: {
       repTerritories: { select: { id: true } },
-      companies: { select: { id: true } },
+      assignedCompanies: { select: { id: true } },
     },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
   });
@@ -91,20 +94,22 @@ export async function getSalesReps(shopId: string): Promise<SalesRepListItem[]> 
     role: r.role,
     isActive: r.isActive,
     territoryCount: r.repTerritories.length,
-    companyCount: r.companies.length,
+    companyCount: r.assignedCompanies.length,
   }));
 }
 
 export async function getActiveSalesReps(shopId: string) {
   const reps = await prisma.salesRep.findMany({
     where: { shopId, isActive: true },
-    select: { id: true, firstName: true, lastName: true },
+    select: { id: true, firstName: true, lastName: true, email: true, role: true },
     orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
   });
 
   return reps.map((r) => ({
     id: r.id,
     name: `${r.firstName} ${r.lastName}`,
+    email: r.email,
+    role: r.role,
   }));
 }
 
@@ -128,7 +133,7 @@ export async function getSalesRepById(
         },
         orderBy: { isPrimary: "desc" },
       },
-      companies: {
+      assignedCompanies: {
         where: { isActive: true },
         include: {
           locations: {
@@ -155,6 +160,7 @@ export async function getSalesRepById(
     phone: rep.phone,
     role: rep.role,
     isActive: rep.isActive,
+    approvalThresholdCents: rep.approvalThresholdCents,
     createdAt: rep.createdAt.toISOString(),
     territories: rep.repTerritories.map((rt) => ({
       id: rt.territory.id,
@@ -162,7 +168,7 @@ export async function getSalesRepById(
       isPrimary: rt.isPrimary,
       companyCount: rt.territory.locations.length,
     })),
-    companies: rep.companies.map((c) => ({
+    companies: rep.assignedCompanies.map((c) => ({
       id: c.id,
       name: c.name,
       territoryName: c.locations[0]?.territory?.name || null,
@@ -176,22 +182,37 @@ export async function getSalesRepById(
 export async function createSalesRep(
   input: CreateSalesRepInput
 ): Promise<{ success: true; repId: string } | { success: false; error: string }> {
-  const { shopId, firstName, lastName, email, phone, role, territoryIds } = input;
+  const { shopId, firstName, lastName, email, phone, role, territoryIds, approvalThresholdCents } = input;
 
   if (!firstName?.trim() || !lastName?.trim() || !email?.trim()) {
     return { success: false, error: "First name, last name, and email are required" };
   }
 
   // Check for duplicate email
-  const existing = await prisma.salesRep.findFirst({
+  const existingEmail = await prisma.salesRep.findFirst({
     where: {
       shopId,
       email: { equals: email.trim().toLowerCase(), mode: "insensitive" },
     },
   });
 
-  if (existing) {
+  if (existingEmail) {
     return { success: false, error: "A sales rep with this email already exists" };
+  }
+
+  // Check for duplicate phone (if provided)
+  const normalizedPhone = phone?.replace(/\D/g, "");
+  if (normalizedPhone) {
+    const existingPhone = await prisma.salesRep.findFirst({
+      where: {
+        shopId,
+        phone: normalizedPhone,
+      },
+    });
+
+    if (existingPhone) {
+      return { success: false, error: "A sales rep with this phone number already exists" };
+    }
   }
 
   try {
@@ -201,10 +222,12 @@ export async function createSalesRep(
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         email: email.trim().toLowerCase(),
-        phone: phone?.trim() || null,
+        phone: normalizedPhone || null,
         role: role || "REP",
         isActive: true,
         activatedAt: new Date(), // Track when rep was activated for billing
+        // Default to 0 (all orders require approval) if not specified
+        approvalThresholdCents: approvalThresholdCents ?? 0,
         ...(territoryIds && territoryIds.length > 0 && {
           repTerritories: {
             create: territoryIds.map((territoryId, index) => ({
@@ -236,7 +259,7 @@ export async function updateSalesRep(
     return { success: false, error: "Sales rep not found" };
   }
 
-  const { firstName, lastName, email, phone, role, territoryIds } = input;
+  const { firstName, lastName, email, phone, role, territoryIds, approvalThresholdCents } = input;
 
   if (
     (firstName !== undefined && !firstName?.trim()) ||
@@ -248,7 +271,7 @@ export async function updateSalesRep(
 
   // Check for duplicate email (excluding current rep)
   if (email) {
-    const existing = await prisma.salesRep.findFirst({
+    const existingEmail = await prisma.salesRep.findFirst({
       where: {
         shopId,
         email: { equals: email.trim().toLowerCase(), mode: "insensitive" },
@@ -256,8 +279,24 @@ export async function updateSalesRep(
       },
     });
 
-    if (existing) {
+    if (existingEmail) {
       return { success: false, error: "A sales rep with this email already exists" };
+    }
+  }
+
+  // Check for duplicate phone (excluding current rep)
+  const normalizedPhone = phone?.replace(/\D/g, "");
+  if (normalizedPhone) {
+    const existingPhone = await prisma.salesRep.findFirst({
+      where: {
+        shopId,
+        phone: normalizedPhone,
+        NOT: { id: repId },
+      },
+    });
+
+    if (existingPhone) {
+      return { success: false, error: "A sales rep with this phone number already exists" };
     }
   }
 
@@ -270,8 +309,9 @@ export async function updateSalesRep(
           ...(firstName && { firstName: firstName.trim() }),
           ...(lastName && { lastName: lastName.trim() }),
           ...(email && { email: email.trim().toLowerCase() }),
-          ...(phone !== undefined && { phone: phone?.trim() || null }),
+          ...(phone !== undefined && { phone: normalizedPhone || null }),
           ...(role && { role }),
+          ...(approvalThresholdCents !== undefined && { approvalThresholdCents }),
         },
       });
 

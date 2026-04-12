@@ -24,9 +24,13 @@ export async function DELETE(request: Request, { params }: RouteParams) {
       );
     }
 
-    // Find and delete the assignment
+    // Find and delete the assignment (verify territory belongs to same shop)
     const repTerritory = await prisma.repTerritory.findFirst({
-      where: { repId: id, territoryId },
+      where: {
+        repId: id,
+        territoryId,
+        territory: { shopId },  // Ensure territory belongs to this shop
+      },
     });
 
     if (!repTerritory) {

@@ -2,20 +2,26 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import { ChevronRight, Plus } from 'lucide-react';
+import { api } from '@/lib/api';
 
-type StatusFilter = 'all' | 'pending' | 'paid' | 'fulfilled';
+type StatusFilter = 'all' | 'DRAFT' | 'AWAITING_REVIEW' | 'PENDING' | 'PAID' | 'REFUNDED';
 
 interface OrderListItem {
   id: string;
-  shopifyOrderId: string;
-  shopifyOrderNumber: string;
-  shopifyCompanyId: string;
-  orderTotal: string;
+  orderNumber: string;
+  shopifyOrderId: string | null;
+  shopifyOrderNumber: string | null;
+  companyId: string;
+  companyName: string;
+  contactName: string | null;
+  locationAddress: string | null;
+  totalCents: number;
   currency: string;
   status: string;
-  placedAt: string;
+  placedAt: string | null;
+  createdAt: string;
   repName: string;
-  territoryName: string | null;
 }
 
 export default function OrdersPage() {
@@ -28,17 +34,14 @@ export default function OrdersPage() {
   const fetchOrders = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({
-        page: page.toString(),
-        pageSize: '20',
+      const { data } = await api.client.orders.list({
+        page,
+        pageSize: 20,
       });
 
-      const res = await fetch(`/api/orders?${params}`);
-      const data = await res.json();
-
-      if (data.data) {
-        setOrders(data.data.items);
-        setHasMore(data.data.pagination.hasNextPage);
+      if (data) {
+        setOrders(data.items as unknown as OrderListItem[]);
+        setHasMore(data.pagination.hasNextPage);
       }
     } catch (error) {
       console.error('Error fetching orders:', error);
@@ -51,11 +54,11 @@ export default function OrdersPage() {
     fetchOrders();
   }, [fetchOrders]);
 
-  const formatPrice = (amount: string, currency: string = 'USD') => {
+  const formatPrice = (cents: number, currency: string = 'USD') => {
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
       currency,
-    }).format(parseFloat(amount));
+    }).format(cents / 100);
   };
 
   const formatDate = (dateString: string) => {
@@ -78,31 +81,52 @@ export default function OrdersPage() {
     }
   };
 
-  const getStatusColor = (status: string) => {
+  const getStatusBadge = (status: string) => {
     const s = status.toLowerCase();
-    if (s.includes('fulfilled') || s.includes('paid')) return 'bg-green-100 text-green-700';
-    if (s.includes('pending') || s.includes('partial')) return 'bg-yellow-100 text-yellow-700';
-    if (s.includes('cancelled') || s.includes('refund')) return 'bg-red-100 text-red-700';
-    return 'bg-gray-100 text-gray-600';
+    if (s.includes('draft')) return 'badge-draft';
+    if (s.includes('awaiting')) return 'badge-awaiting';
+    if (s.includes('fulfilled') || s.includes('paid')) return 'badge-paid';
+    if (s.includes('pending')) return 'badge-pending';
+    if (s.includes('cancelled') || s.includes('refund')) return 'badge-cancelled';
+    return 'badge-default';
+  };
+
+  const formatStatus = (status: string) => {
+    // Convert AWAITING_REVIEW to "Awaiting Review", DRAFT to "Draft", etc.
+    return status
+      .split('_')
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+      .join(' ');
   };
 
   // Filter orders by status (client-side for now)
   const filteredOrders = orders.filter((order) => {
     if (statusFilter === 'all') return true;
-    const s = order.status.toLowerCase();
-    if (statusFilter === 'pending') return s.includes('pending') || s === '';
-    if (statusFilter === 'paid') return s.includes('paid');
-    if (statusFilter === 'fulfilled') return s.includes('fulfilled');
-    return true;
+    return order.status === statusFilter;
   });
+
+  // Filter labels for display
+  const filterLabels: Record<StatusFilter, string> = {
+    all: 'All',
+    DRAFT: 'Draft',
+    AWAITING_REVIEW: 'In Review',
+    PENDING: 'Pending',
+    PAID: 'Paid',
+    REFUNDED: 'Refunded',
+  };
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-bold text-gray-900">Orders</h1>
+      <div className="flex justify-end">
+        <Link href="/orders/create" className="btn-primary flex items-center gap-1.5">
+          <Plus className="w-4 h-4" />
+          New Order
+        </Link>
+      </div>
 
       {/* Status Filter */}
       <div className="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4">
-        {(['all', 'pending', 'paid', 'fulfilled'] as const).map((status) => (
+        {(['all', 'DRAFT', 'AWAITING_REVIEW', 'PENDING', 'PAID', 'REFUNDED'] as const).map((status) => (
           <button
             key={status}
             onClick={() => setStatusFilter(status)}
@@ -112,7 +136,7 @@ export default function OrdersPage() {
                 : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
             }`}
           >
-            {status.charAt(0).toUpperCase() + status.slice(1)}
+            {filterLabels[status]}
           </button>
         ))}
       </div>
@@ -137,23 +161,34 @@ export default function OrdersPage() {
             <Link
               key={order.id}
               href={`/orders/${order.id}`}
-              className="card block hover:shadow-md transition-shadow"
+              className="card-interactive flex items-center gap-3"
             >
-              <div className="flex items-center justify-between mb-2">
-                <p className="font-semibold text-gray-900">{order.shopifyOrderNumber}</p>
-                <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(order.status)}`}>
-                  {order.status || 'Pending'}
-                </span>
+              <div className="flex-1 min-w-0">
+                {/* Header: Order number and status */}
+                <div className="flex items-center gap-2 mb-1">
+                  <p className="font-semibold text-gray-900">
+                    {order.shopifyOrderNumber || order.orderNumber}
+                  </p>
+                  <span className={getStatusBadge(order.status)}>
+                    {formatStatus(order.status) || 'Draft'}
+                  </span>
+                </div>
+
+                {/* Company and Contact */}
+                <p className="text-sm font-medium text-gray-700 truncate">{order.companyName}</p>
+
+                {/* Total and Date */}
+                <div className="flex items-center gap-2 mt-1">
+                  <p className="text-sm font-semibold text-gray-900">
+                    {formatPrice(order.totalCents, order.currency)}
+                  </p>
+                  <span className="text-gray-300">•</span>
+                  <p className="text-xs text-gray-500">
+                    {formatDate(order.placedAt || order.createdAt)}
+                  </p>
+                </div>
               </div>
-              {order.territoryName && (
-                <p className="text-sm text-gray-600">{order.territoryName}</p>
-              )}
-              <div className="flex items-center justify-between mt-2">
-                <p className="font-medium text-gray-900">
-                  {formatPrice(order.orderTotal, order.currency)}
-                </p>
-                <p className="text-xs text-gray-400">{formatDate(order.placedAt)}</p>
-              </div>
+              <ChevronRight className="w-5 h-5 text-gray-400 flex-shrink-0" />
             </Link>
           ))
         )}

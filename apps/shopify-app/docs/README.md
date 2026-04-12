@@ -9,17 +9,22 @@ This app runs inside the Shopify Admin and handles:
 - Product catalog configuration
 - Order processing and Shopify integration
 - Company/B2B customer management
+- Payment terms and vaulted card processing
 - Subscription billing
 
 ## Documentation Index
 
 | Document | Description |
 |----------|-------------|
-| [Orders](./orders.md) | Order lifecycle, Shopify draft orders, webhooks |
+| [Orders](./orders.md) | Order lifecycle, payment terms, vaulted cards, webhooks |
+| [OrderForm](./order-form.md) | Order creation/edit form with payment selection |
+| [Promotions](./promotions.md) | Promotion types, scopes, real-time evaluation |
+| [Catalogs](./catalogs.md) | B2B catalog pricing and product availability |
+| [Pickers](./pickers.md) | Company, Contact, Location picker components |
 | [Territories](./territories.md) | Geographic regions, location assignment |
-| [Companies](./companies.md) | B2B accounts, contacts, locations |
+| [Companies](./companies.md) | B2B accounts, contacts, locations, payment methods |
 | [Sales Reps](./sales-reps.md) | Rep management, territory access |
-| [Billing](./billing.md) | Plans, subscriptions, usage tracking |
+| [Billing](./billing.md) | App subscription plans, usage tracking |
 
 ## Architecture
 
@@ -68,12 +73,29 @@ This app is the **only** component that interacts with Shopify APIs:
 | Service | Purpose |
 |---------|---------|
 | `order.server.ts` | Order CRUD, Shopify sync |
+| `promotion.server.ts` | Promotion CRUD, evaluation |
+| `catalog.server.ts` | B2B catalog sync, pricing lookup |
+| `product.server.ts` | Product queries with catalog pricing |
 | `territory.server.ts` | Territory management |
 | `company.server.ts` | Company import/sync |
+| `companySync.server.ts` | Full company sync (contacts, locations, catalogs) |
 | `salesRep.server.ts` | Rep management |
 | `billing.server.ts` | Subscription billing |
 | `customer.server.ts` | Customer sync |
 | `webhook.server.ts` | Webhook processing |
+
+## Scheduled Jobs (GitHub Actions)
+
+Located in `.github/workflows/`:
+
+| Workflow | Schedule | Description |
+|----------|----------|-------------|
+| `monthly-billing.yml` | 1st of month | Process monthly usage billing |
+| `daily-payments.yml` | Daily 6:00 UTC | Charge due orders / send invoices |
+
+**Required Secrets:**
+- `SHOPIFY_APP_URL` - Your deployed app URL
+- `APP_SECRET` - Secret for authenticating cron requests
 
 ## Development
 

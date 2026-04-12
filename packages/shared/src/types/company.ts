@@ -1,6 +1,6 @@
 export type SyncStatus = 'SYNCED' | 'PENDING' | 'SYNCING' | 'ERROR' | 'NOT_SYNCED';
 
-export type PaymentTerms = 'DUE_ON_ORDER' | 'NET_15' | 'NET_30' | 'NET_45' | 'NET_60';
+export type PaymentTerms = 'DUE_ON_ORDER' | 'DUE_ON_RECEIPT' | 'DUE_ON_FULFILLMENT' | 'NET_15' | 'NET_30' | 'NET_45' | 'NET_60';
 
 export interface Company {
   id: string;

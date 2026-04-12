@@ -1,20 +1,13 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { getAuthContext } from '@/lib/auth';
-import {
-  stripe,
-  getOrCreateStripeCustomer,
-  createSetupIntent,
-  getPaymentMethod,
-  detachPaymentMethod,
-} from '@/lib/stripe/client';
 import type { ApiError } from '@/types';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-// GET: List payment methods for a company
+// GET: List payment methods for a company (from Shopify vault, synced to our database)
 export async function GET(_request: Request, { params }: RouteParams) {
   try {
     const { id: companyId } = await params;
@@ -43,11 +36,22 @@ export async function GET(_request: Request, { params }: RouteParams) {
       );
     }
 
-    // Get payment methods from database
+    // Get payment methods from database (synced from Shopify)
     const paymentMethods = await prisma.paymentMethod.findMany({
       where: {
         shopId,
         companyId,
+        isActive: true,
+      },
+      include: {
+        contact: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
       },
       orderBy: [{ isDefault: 'desc' }, { createdAt: 'desc' }],
     });
@@ -60,6 +64,9 @@ export async function GET(_request: Request, { params }: RouteParams) {
       expiryMonth: pm.expiryMonth,
       expiryYear: pm.expiryYear,
       isDefault: pm.isDefault,
+      contactId: pm.contactId,
+      contactName: pm.contact ? `${pm.contact.firstName} ${pm.contact.lastName}` : null,
+      contactEmail: pm.contact?.email,
       createdAt: pm.createdAt.toISOString(),
     }));
 
@@ -73,195 +80,7 @@ export async function GET(_request: Request, { params }: RouteParams) {
   }
 }
 
-// POST: Create setup intent for adding a new payment method
-export async function POST(request: Request, { params }: RouteParams) {
-  try {
-    const { id: companyId } = await params;
-    const { shopId, repId, role } = await getAuthContext();
-
-    if (!stripe) {
-      return NextResponse.json<ApiError>(
-        { data: null, error: { code: 'CONFIG_ERROR', message: 'Payment processing not configured' } },
-        { status: 503 }
-      );
-    }
-
-    // Get company and verify access
-    const company = await prisma.company.findFirst({
-      where: {
-        id: companyId,
-        shopId,
-        ...(role === 'REP'
-          ? {
-              OR: [
-                { assignedRepId: repId },
-                { territory: { repTerritories: { some: { repId } } } },
-              ],
-            }
-          : {}),
-      },
-    });
-
-    if (!company) {
-      return NextResponse.json<ApiError>(
-        { data: null, error: { code: 'NOT_FOUND', message: 'Company not found' } },
-        { status: 404 }
-      );
-    }
-
-    // Get or create Stripe customer
-    const customerId = await getOrCreateStripeCustomer(company.name, undefined, {
-      shopId,
-      companyId: company.id,
-    });
-
-    if (!customerId) {
-      return NextResponse.json<ApiError>(
-        { data: null, error: { code: 'STRIPE_ERROR', message: 'Failed to create customer' } },
-        { status: 500 }
-      );
-    }
-
-    // Create setup intent
-    const setupIntent = await createSetupIntent(customerId);
-
-    if (!setupIntent) {
-      return NextResponse.json<ApiError>(
-        { data: null, error: { code: 'STRIPE_ERROR', message: 'Failed to create setup intent' } },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({
-      data: {
-        clientSecret: setupIntent.clientSecret,
-        customerId,
-      },
-      error: null,
-    });
-  } catch (error) {
-    console.error('Error creating setup intent:', error);
-    return NextResponse.json<ApiError>(
-      { data: null, error: { code: 'INTERNAL_ERROR', message: 'Failed to setup payment method' } },
-      { status: 500 }
-    );
-  }
-}
-
-// PUT: Confirm payment method setup and save to database
-export async function PUT(request: Request, { params }: RouteParams) {
-  try {
-    const { id: companyId } = await params;
-    const { shopId, repId, role } = await getAuthContext();
-    const body = await request.json();
-
-    const { paymentMethodId, customerId, setAsDefault } = body as {
-      paymentMethodId: string;
-      customerId: string;
-      setAsDefault?: boolean;
-    };
-
-    if (!paymentMethodId || !customerId) {
-      return NextResponse.json<ApiError>(
-        { data: null, error: { code: 'VALIDATION_ERROR', message: 'Missing required fields' } },
-        { status: 400 }
-      );
-    }
-
-    // Get company and verify access
-    const company = await prisma.company.findFirst({
-      where: {
-        id: companyId,
-        shopId,
-        ...(role === 'REP'
-          ? {
-              OR: [
-                { assignedRepId: repId },
-                { territory: { repTerritories: { some: { repId } } } },
-              ],
-            }
-          : {}),
-      },
-    });
-
-    if (!company) {
-      return NextResponse.json<ApiError>(
-        { data: null, error: { code: 'NOT_FOUND', message: 'Company not found' } },
-        { status: 404 }
-      );
-    }
-
-    // Get payment method details from Stripe
-    const paymentMethod = await getPaymentMethod(paymentMethodId);
-
-    if (!paymentMethod || paymentMethod.type !== 'card' || !paymentMethod.card) {
-      return NextResponse.json<ApiError>(
-        { data: null, error: { code: 'STRIPE_ERROR', message: 'Invalid payment method' } },
-        { status: 400 }
-      );
-    }
-
-    // If setting as default, unset other defaults
-    if (setAsDefault) {
-      await prisma.paymentMethod.updateMany({
-        where: {
-          shopId,
-          companyId,
-        },
-        data: {
-          isDefault: false,
-        },
-      });
-    }
-
-    // Check if this is the first payment method (auto set as default)
-    const existingCount = await prisma.paymentMethod.count({
-      where: {
-        shopId,
-        companyId,
-      },
-    });
-
-    const isDefault = setAsDefault || existingCount === 0;
-
-    // Save payment method to database
-    const savedMethod = await prisma.paymentMethod.create({
-      data: {
-        shopId,
-        companyId,
-        provider: 'STRIPE',
-        externalCustomerId: customerId,
-        externalMethodId: paymentMethodId,
-        last4: paymentMethod.card.last4,
-        brand: paymentMethod.card.brand,
-        expiryMonth: paymentMethod.card.exp_month,
-        expiryYear: paymentMethod.card.exp_year,
-        isDefault,
-      },
-    });
-
-    return NextResponse.json({
-      data: {
-        id: savedMethod.id,
-        provider: savedMethod.provider,
-        last4: savedMethod.last4,
-        brand: savedMethod.brand,
-        expiryMonth: savedMethod.expiryMonth,
-        expiryYear: savedMethod.expiryYear,
-        isDefault: savedMethod.isDefault,
-      },
-      error: null,
-    });
-  } catch (error) {
-    console.error('Error saving payment method:', error);
-    return NextResponse.json<ApiError>(
-      { data: null, error: { code: 'INTERNAL_ERROR', message: 'Failed to save payment method' } },
-      { status: 500 }
-    );
-  }
-}
-
-// DELETE: Remove a payment method
+// DELETE: Remove a payment method (soft delete - mark as inactive)
 export async function DELETE(request: Request, { params }: RouteParams) {
   try {
     const { id: companyId } = await params;
@@ -315,14 +134,10 @@ export async function DELETE(request: Request, { params }: RouteParams) {
       );
     }
 
-    // Detach from Stripe
-    if (paymentMethod.provider === 'STRIPE') {
-      await detachPaymentMethod(paymentMethod.externalMethodId);
-    }
-
-    // Delete from database
-    await prisma.paymentMethod.delete({
+    // Soft delete - mark as inactive (actual removal in Shopify should be done via Shopify admin)
+    await prisma.paymentMethod.update({
       where: { id: paymentMethodId },
+      data: { isActive: false },
     });
 
     // If this was the default, set another as default
@@ -331,6 +146,7 @@ export async function DELETE(request: Request, { params }: RouteParams) {
         where: {
           shopId,
           companyId,
+          isActive: true,
         },
         orderBy: { createdAt: 'desc' },
       });

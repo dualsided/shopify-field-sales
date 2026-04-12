@@ -1,66 +1,64 @@
 'use client';
 
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { useRouter, usePathname } from 'next/navigation';
+import { Home, Building2, ClipboardList, Lock } from 'lucide-react';
+import { useSaveBarContext } from './SaveBarContext';
 
 const navItems = [
   {
     href: '/dashboard',
     label: 'Dashboard',
-    icon: (
-      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
-      </svg>
-    ),
+    icon: Home,
   },
   {
-    href: '/accounts',
-    label: 'Accounts',
-    icon: (
-      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-      </svg>
-    ),
+    href: '/companies',
+    label: 'Companies',
+    icon: Building2,
   },
   {
     href: '/orders',
     label: 'Orders',
-    icon: (
-      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-      </svg>
-    ),
+    icon: ClipboardList,
   },
   {
-    href: '/settings',
-    label: 'More',
-    icon: (
-      <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-      </svg>
-    ),
+    href: '/account',
+    label: 'Account',
+    icon: Lock,
   },
 ];
 
 export function BottomNav() {
   const pathname = usePathname();
+  const router = useRouter();
+  const { isDirty, triggerShake } = useSaveBarContext();
+
+  const handleNavClick = (href: string) => {
+    if (isDirty) {
+      triggerShake();
+    } else {
+      router.push(href);
+    }
+  };
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 safe-bottom">
       <div className="flex justify-around">
         {navItems.map((item) => {
           const isActive = pathname.startsWith(item.href);
+          const Icon = item.icon;
           return (
-            <Link
+            <button
               key={item.href}
-              href={item.href}
-              className={`flex flex-col items-center justify-center min-h-touch min-w-touch py-2 px-4 ${
-                isActive ? 'text-primary-600' : 'text-gray-500'
+              onClick={() => handleNavClick(item.href)}
+              className={`flex flex-col items-center justify-center min-h-touch min-w-touch py-2 px-4 transition-colors ${
+                isActive ? 'text-primary-600' : 'text-gray-400 hover:text-gray-600'
               }`}
             >
-              {item.icon}
-              <span className="text-xs mt-1">{item.label}</span>
-            </Link>
+              <div className={`p-1.5 rounded-full transition-colors ${isActive ? 'bg-primary-100' : ''}`}>
+                <Icon className={`w-5 h-5 ${isActive ? 'stroke-[2.5]' : ''}`} />
+              </div>
+              <span className={`text-xs mt-0.5 ${isActive ? 'font-medium' : ''}`}>{item.label}</span>
+            </button>
           );
         })}
       </div>

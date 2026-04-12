@@ -1,11 +1,10 @@
-export type PaymentStrategy = 'SHOPIFY_TERMS' | 'STRIPE_VAULT' | 'SHOPIFY_VAULT';
+export type PaymentStrategy = 'SHOPIFY_TERMS' | 'SHOPIFY_VAULT';
 
 export interface Shop {
   id: string;
   shopifyDomain: string;
   shopName: string;
   paymentStrategy: PaymentStrategy;
-  stripeAccountId: string | null;
   config: Record<string, unknown> | null;
   isActive: boolean;
   // New fields for managed companies detection

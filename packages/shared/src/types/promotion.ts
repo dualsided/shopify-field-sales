@@ -1,4 +1,12 @@
-export type PromotionType = 'PERCENTAGE' | 'FIXED_AMOUNT' | 'BUY_X_GET_Y';
+export type PromotionType = 'PERCENTAGE' | 'FIXED_AMOUNT' | 'BUY_X_GET_Y' | 'SPEND_GET_FREE';
+
+/**
+ * Where the promotion discount is applied:
+ * - LINE_ITEM: Adds free items to order (BUY_X_GET_Y, SPEND_GET_FREE)
+ * - ORDER_TOTAL: Discounts off subtotal (PERCENTAGE, FIXED_AMOUNT)
+ * - SHIPPING: Discounts off shipping cost
+ */
+export type PromotionScope = 'LINE_ITEM' | 'ORDER_TOTAL' | 'SHIPPING';
 
 export interface Promotion {
   id: string;
@@ -6,6 +14,7 @@ export interface Promotion {
   name: string;
   description: string | null;
   type: PromotionType;
+  scope: PromotionScope;
   value: number; // For PERCENTAGE: 10 = 10%, for FIXED_AMOUNT: 10 = $10
 
   // Conditions
@@ -90,6 +99,7 @@ export interface AppliedPromotion {
   id: string;
   name: string;
   type: PromotionType;
+  scope: PromotionScope;
   totalDiscountCents: number;
 }
 

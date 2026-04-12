@@ -119,10 +119,6 @@ REFRESH_TOKEN_EXPIRES_IN="7d"
 
 # App URL
 NEXT_PUBLIC_APP_URL="http://localhost:3001"
-
-# Stripe (optional - for payment vaulting)
-STRIPE_SECRET_KEY=""
-STRIPE_WEBHOOK_SECRET=""
 ```
 
 ### 5. Initialize Database
@@ -262,8 +258,6 @@ This monorepo is configured for Render deployment using a Blueprint (`render.yam
 | `SHOPIFY_API_SECRET` | shopify-app | From Shopify Partner Dashboard |
 | `SHOPIFY_APP_URL` | shopify-app | Your Render service URL |
 | `NEXT_PUBLIC_APP_URL` | field-app | Your Render service URL |
-| `STRIPE_SECRET_KEY` | field-app | Optional - for payment vaulting |
-| `STRIPE_WEBHOOK_SECRET` | field-app | Optional - for Stripe webhooks |
 
 5. Click **Apply** to deploy
 

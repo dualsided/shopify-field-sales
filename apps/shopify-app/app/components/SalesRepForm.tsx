@@ -1,9 +1,33 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useAppBridge, SaveBar } from "@shopify/app-bridge-react";
+import { TerritoryPicker, type Territory } from "./TerritoryPicker";
 
-interface Territory {
-  id: string;
-  name: string;
+// Phone number utilities
+function normalizePhone(value: string): string {
+  // Strip to digits only, limit to 10 digits
+  return value.replace(/\D/g, "").slice(0, 10);
+}
+
+function formatPhone(normalized: string): string {
+  if (!normalized) return "";
+  const digits = normalized.replace(/\D/g, "");
+  if (digits.length === 0) return "";
+  if (digits.length <= 3) return `(${digits}`;
+  if (digits.length <= 6) return `(${digits.slice(0, 3)}) ${digits.slice(3)}`;
+  return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 10)}`;
+}
+
+function isValidPhone(normalized: string): boolean {
+  // Valid if empty or exactly 10 digits
+  return normalized.length === 0 || normalized.length === 10;
+}
+
+// Email validation
+function isValidEmail(email: string): boolean {
+  if (!email) return true; // Empty is valid (use required for mandatory)
+  // Standard email regex - allows most valid emails
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
 }
 
 export interface SalesRepFormData {
@@ -11,8 +35,10 @@ export interface SalesRepFormData {
   lastName: string;
   email: string;
   phone: string;
-  role: "REP" | "MANAGER";
+  role: "REP" | "MANAGER" | "ADMIN";
   territoryIds: string[];
+  requiresOrderApproval: boolean;
+  approvalThresholdDollars: string; // Stored as string for input, converted to cents on submit
 }
 
 interface SalesRepData {
@@ -21,16 +47,17 @@ interface SalesRepData {
   lastName: string;
   email: string;
   phone: string | null;
-  role: "REP" | "MANAGER";
+  role: "REP" | "MANAGER" | "ADMIN";
   territoryIds: string[];
+  approvalThresholdCents: number | null;
 }
 
 interface SalesRepFormProps {
   rep?: SalesRepData;
+  /** Initial territories for edit mode (maps IDs to names) */
   territories: Territory[];
   onSubmit: (data: SalesRepFormData) => void;
   onCancel: () => void;
-  actionError?: string;
 }
 
 const defaultValues: SalesRepFormData = {
@@ -40,10 +67,21 @@ const defaultValues: SalesRepFormData = {
   phone: "",
   role: "REP",
   territoryIds: [],
+  requiresOrderApproval: true,
+  approvalThresholdDollars: "0",
 };
 
 function repToFormData(rep?: SalesRepData): SalesRepFormData {
   if (!rep) return defaultValues;
+
+  // Convert approvalThresholdCents to form values
+  // null = no approval required (checkbox unchecked)
+  // 0+ = approval required, show threshold
+  const requiresOrderApproval = rep.approvalThresholdCents !== null;
+  const approvalThresholdDollars = rep.approvalThresholdCents !== null
+    ? (rep.approvalThresholdCents / 100).toString()
+    : "0";
+
   return {
     firstName: rep.firstName || "",
     lastName: rep.lastName || "",
@@ -51,6 +89,8 @@ function repToFormData(rep?: SalesRepData): SalesRepFormData {
     phone: rep.phone || "",
     role: rep.role || "REP",
     territoryIds: rep.territoryIds || [],
+    requiresOrderApproval,
+    approvalThresholdDollars,
   };
 }
 
@@ -59,7 +99,6 @@ export function SalesRepForm({
   territories,
   onSubmit,
   onCancel,
-  actionError,
 }: SalesRepFormProps) {
   const shopify = useAppBridge();
   const isEdit = !!rep?.id;
@@ -69,6 +108,28 @@ export function SalesRepForm({
 
   // Form state
   const [formData, setFormData] = useState<SalesRepFormData>(initialValuesRef.current);
+
+  // Territory picker state - convert IDs to full objects using the territories prop
+  const initialSelectedTerritories = territories.filter((t) =>
+    initialValuesRef.current.territoryIds.includes(t.id)
+  );
+  const [selectedTerritories, setSelectedTerritories] = useState<Territory[]>(initialSelectedTerritories);
+
+  // Load territories from API for the picker
+  const loadTerritories = useCallback(async (): Promise<Territory[]> => {
+    const response = await fetch("/api/territories");
+    const data = await response.json();
+    return data.territories || [];
+  }, []);
+
+  // Handle territory selection
+  const handleTerritorySelect = useCallback((selected: Territory[]) => {
+    setSelectedTerritories(selected);
+    setFormData((prev) => ({
+      ...prev,
+      territoryIds: selected.map((t) => t.id),
+    }));
+  }, []);
 
   // Check if form has changes compared to initial
   const isDirty = JSON.stringify(formData) !== JSON.stringify(initialValuesRef.current);
@@ -101,14 +162,6 @@ export function SalesRepForm({
     }
   }, [isDirty, shopify]);
 
-  // Toggle territory selection
-  const toggleTerritory = useCallback((territoryId: string, checked: boolean) => {
-    if (checked) {
-      updateField("territoryIds", [...formData.territoryIds, territoryId]);
-    } else {
-      updateField("territoryIds", formData.territoryIds.filter((t) => t !== territoryId));
-    }
-  }, [formData.territoryIds, updateField]);
 
   return (
     <>
@@ -118,10 +171,6 @@ export function SalesRepForm({
       </SaveBar>
 
       <s-stack gap="base">
-        {actionError && (
-          <s-banner tone="critical">{actionError}</s-banner>
-        )}
-
         <s-grid gridTemplateColumns="repeat(2, 1fr)" gap="base">
           <s-grid-item>
             <s-text-field
@@ -151,19 +200,22 @@ export function SalesRepForm({
               value={formData.email}
               onInput={(e: Event) => {
                 const target = e.target as HTMLInputElement;
-                updateField("email", target.value);
+                updateField("email", target.value.trim());
               }}
+              error={formData.email && !isValidEmail(formData.email) ? "Enter a valid email address" : undefined}
               required
             />
           </s-grid-item>
           <s-grid-item>
             <s-text-field
               label="Phone"
-              value={formData.phone}
+              value={formatPhone(formData.phone)}
               onInput={(e: Event) => {
                 const target = e.target as HTMLInputElement;
-                updateField("phone", target.value);
+                updateField("phone", normalizePhone(target.value));
               }}
+              error={formData.phone && !isValidPhone(formData.phone) ? "Enter a valid 10-digit phone number" : undefined}
+              placeholder="(555) 123-4567"
             />
           </s-grid-item>
           <s-grid-item gridColumn="span 2">
@@ -172,43 +224,61 @@ export function SalesRepForm({
               value={formData.role}
               onChange={(e: Event) => {
                 const target = e.target as HTMLSelectElement;
-                updateField("role", target.value as "REP" | "MANAGER");
+                updateField("role", target.value as "REP" | "MANAGER" | "ADMIN");
               }}
             >
               <s-option value="REP">Sales Rep</s-option>
               <s-option value="MANAGER">Sales Manager</s-option>
+              <s-option value="ADMIN">Admin</s-option>
             </s-select>
           </s-grid-item>
         </s-grid>
 
-        {territories.length > 0 && (
-          <s-stack gap="base">
-            <s-stack gap="none">
-              <s-text>Assigned Territories</s-text>
-              <s-text color="subdued">Select the territories this rep can access</s-text>
-            </s-stack>
-            <s-stack gap="base">
-              {territories.map((territory) => (
-                <s-checkbox
-                  key={territory.id}
-                  label={territory.name}
-                  value={territory.id}
-                  checked={formData.territoryIds.includes(territory.id)}
-                  onChange={(e: Event) => {
-                    const target = e.target as HTMLInputElement;
-                    toggleTerritory(territory.id, target.checked);
-                  }}
-                />
-              ))}
-            </s-stack>
-          </s-stack>
-        )}
+        <s-divider />
 
-        <s-button-group>
-          <s-button variant="secondary" onClick={onCancel}>
-            Cancel
-          </s-button>
-        </s-button-group>
+        <s-stack gap="base">
+          <s-heading>Order Approval</s-heading>
+          <s-checkbox
+            label="Require order approval"
+            checked={formData.requiresOrderApproval}
+            onChange={(e: Event) => {
+              const target = e.target as HTMLInputElement;
+              updateField("requiresOrderApproval", target.checked);
+            }}
+          />
+          {formData.requiresOrderApproval && (
+            <s-stack gap="small-200">
+              <s-number-field
+                label="Minimum order amount for approval"
+                value={formData.approvalThresholdDollars}
+                onInput={(e: Event) => {
+                  const target = e.target as HTMLInputElement;
+                  // Only allow non-negative numbers
+                  const value = Math.max(0, parseFloat(target.value) || 0).toString();
+                  updateField("approvalThresholdDollars", value);
+                }}
+                prefix="$"
+                min={0}
+              />
+              <s-text color="subdued">
+                Orders at or above this amount will require approval. Set to $0 to require approval for all orders.
+              </s-text>
+            </s-stack>
+          )}
+        </s-stack>
+
+        <s-divider />
+
+        <s-stack gap="base">
+          <s-heading>Assigned Territories</s-heading>
+          <TerritoryPicker
+            heading="Assign territories"
+            selectedTerritories={selectedTerritories}
+            onSelect={handleTerritorySelect}
+            onLoadTerritories={loadTerritories}
+          />
+        </s-stack>
+
       </s-stack>
     </>
   );

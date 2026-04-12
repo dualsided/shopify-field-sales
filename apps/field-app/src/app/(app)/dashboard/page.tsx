@@ -2,56 +2,60 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-
-interface QuotaProgress {
-  hasQuota: boolean;
-  targetCents: number | null;
-  achievedCents: number;
-  projectedCents: number;
-  progressPercent: number;
-  projectedPercent: number;
-  remainingCents: number;
-  daysRemaining: number;
-  onPaceIndicator: 'ahead' | 'on_pace' | 'behind' | 'at_risk' | 'no_quota';
-}
+import { ClipboardList, Building2, Clock, ChevronRight } from 'lucide-react';
+import { api } from '@/lib/api';
 
 interface DashboardMetrics {
   ordersThisMonth: number;
   orderChange: number;
-  revenue: number;
-  revenueChange: number;
   accountCount: number;
   pendingOrders: number;
-  quota: QuotaProgress | null;
 }
 
-interface RecentOrder {
+interface OrderItem {
   id: string;
-  shopifyOrderNumber: string;
-  orderTotal: string;
+  orderNumber: string;
+  shopifyOrderNumber: string | null;
+  totalCents: number;
   currency: string;
   status: string;
-  placedAt: string;
-  territoryName: string | null;
+  placedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  companyName: string;
+}
+
+interface LatestCompany {
+  id: string;
+  name: string;
+  accountNumber: string | null;
+  createdAt: string;
 }
 
 interface DashboardData {
   metrics: DashboardMetrics;
-  recentOrders: RecentOrder[];
+  orders: {
+    draft: OrderItem[];
+    awaitingReview: OrderItem[];
+    placed: OrderItem[];
+  };
+  latestCompanies: LatestCompany[];
 }
+
+type OrderTab = 'draft' | 'awaitingReview' | 'placed';
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [activeOrderTab, setActiveOrderTab] = useState<OrderTab>('draft');
 
   useEffect(() => {
     async function fetchDashboard() {
       try {
-        const res = await fetch('/api/dashboard');
-        const result = await res.json();
+        const { data: result } = await api.client.dashboard.stats();
 
-        if (result.data) {
-          setData(result.data);
+        if (result) {
+          setData(result as unknown as DashboardData);
         }
       } catch (error) {
         console.error('Error fetching dashboard:', error);
@@ -92,222 +96,195 @@ export default function DashboardPage() {
     }
   };
 
-  const getStatusColor = (status: string) => {
+  const getStatusBadge = (status: string) => {
     const s = status.toLowerCase();
-    if (s.includes('fulfilled') || s.includes('paid')) return 'bg-green-100 text-green-700';
-    if (s.includes('pending') || s.includes('partial')) return 'bg-yellow-100 text-yellow-700';
-    if (s.includes('cancelled') || s.includes('refund')) return 'bg-red-100 text-red-700';
-    return 'bg-gray-100 text-gray-600';
-  };
-
-  const ChangeIndicator = ({ value }: { value: number }) => {
-    if (value === 0) return null;
-    const isPositive = value > 0;
-    return (
-      <span className={`text-xs font-medium ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
-        {isPositive ? '↑' : '↓'} {Math.abs(value)}%
-      </span>
-    );
-  };
-
-  const getPaceStyles = (indicator: string) => {
-    switch (indicator) {
-      case 'ahead':
-        return { bg: 'bg-green-100', text: 'text-green-700', label: 'Ahead', progress: 'bg-green-500' };
-      case 'on_pace':
-        return { bg: 'bg-blue-100', text: 'text-blue-700', label: 'On Pace', progress: 'bg-blue-500' };
-      case 'behind':
-        return { bg: 'bg-yellow-100', text: 'text-yellow-700', label: 'Behind', progress: 'bg-yellow-500' };
-      case 'at_risk':
-        return { bg: 'bg-red-100', text: 'text-red-700', label: 'At Risk', progress: 'bg-red-500' };
-      default:
-        return { bg: 'bg-gray-100', text: 'text-gray-600', label: 'No Quota', progress: 'bg-gray-400' };
-    }
-  };
-
-  const QuotaCard = ({ quota }: { quota: QuotaProgress }) => {
-    if (!quota.hasQuota) {
-      return (
-        <div className="card">
-          <p className="text-sm text-gray-500">Monthly Quota</p>
-          <p className="text-lg font-medium text-gray-400 mt-1">No quota assigned</p>
-        </div>
-      );
-    }
-
-    const paceStyles = getPaceStyles(quota.onPaceIndicator);
-    const progressWidth = Math.min(quota.progressPercent, 100);
-    const projectedWidth = Math.min(quota.projectedPercent, 100);
-
-    return (
-      <div className="card">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-sm text-gray-500">Monthly Quota</p>
-          <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${paceStyles.bg} ${paceStyles.text}`}>
-            {paceStyles.label}
-          </span>
-        </div>
-
-        {/* Progress bar */}
-        <div className="relative h-3 bg-gray-200 rounded-full overflow-hidden mb-3">
-          {/* Projected (lighter, behind achieved) */}
-          <div
-            className={`absolute inset-y-0 left-0 ${paceStyles.progress} opacity-30 rounded-full`}
-            style={{ width: `${projectedWidth}%` }}
-          />
-          {/* Achieved (solid) */}
-          <div
-            className={`absolute inset-y-0 left-0 ${paceStyles.progress} rounded-full`}
-            style={{ width: `${progressWidth}%` }}
-          />
-        </div>
-
-        {/* Stats */}
-        <div className="grid grid-cols-3 gap-2 text-center">
-          <div>
-            <p className="text-xs text-gray-500">Target</p>
-            <p className="text-sm font-semibold text-gray-900">
-              {formatPrice(quota.targetCents! / 100)}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs text-gray-500">Achieved</p>
-            <p className="text-sm font-semibold text-gray-900">
-              {formatPrice(quota.achievedCents / 100)}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs text-gray-500">Remaining</p>
-            <p className="text-sm font-semibold text-gray-900">
-              {formatPrice(quota.remainingCents / 100)}
-            </p>
-          </div>
-        </div>
-
-        {/* Progress percentage and days remaining */}
-        <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
-          <span className="text-sm font-medium text-gray-900">
-            {quota.progressPercent}% achieved
-          </span>
-          <span className="text-xs text-gray-500">
-            {quota.daysRemaining} days left
-          </span>
-        </div>
-      </div>
-    );
+    if (s.includes('draft')) return 'badge-draft';
+    if (s.includes('awaiting')) return 'badge-awaiting';
+    if (s.includes('fulfilled') || s.includes('paid')) return 'badge-paid';
+    if (s.includes('pending')) return 'badge-pending';
+    if (s.includes('cancelled') || s.includes('refund')) return 'badge-cancelled';
+    return 'badge-default';
   };
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-
       {/* KPI Cards */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-3 gap-3">
         <div className="card">
-          <p className="text-sm text-gray-500">Orders This Month</p>
-          <div className="flex items-baseline gap-2">
-            <p className="text-2xl font-bold text-gray-900">
-              {loading ? '--' : data?.metrics.ordersThisMonth || 0}
-            </p>
-            {data && <ChangeIndicator value={data.metrics.orderChange} />}
+          <div className="flex items-center gap-2 mb-1">
+            <ClipboardList className="w-4 h-4 text-primary-500" />
+            <p className="text-sm text-gray-500">Orders</p>
           </div>
+          <p className="text-2xl font-bold text-primary-600">
+            {loading ? '--' : data?.metrics.ordersThisMonth || 0}
+          </p>
         </div>
         <div className="card">
-          <p className="text-sm text-gray-500">Revenue</p>
-          <div className="flex items-baseline gap-2">
-            <p className="text-2xl font-bold text-gray-900">
-              {loading ? '$--' : formatPrice(data?.metrics.revenue || 0)}
-            </p>
-            {data && <ChangeIndicator value={data.metrics.revenueChange} />}
+          <div className="flex items-center gap-2 mb-1">
+            <Building2 className="w-4 h-4 text-primary-500" />
+            <p className="text-sm text-gray-500">Companies</p>
           </div>
-        </div>
-        <div className="card">
-          <p className="text-sm text-gray-500">Accounts</p>
-          <p className="text-2xl font-bold text-gray-900">
+          <p className="text-2xl font-bold text-primary-600">
             {loading ? '--' : data?.metrics.accountCount || 0}
           </p>
         </div>
         <div className="card">
-          <p className="text-sm text-gray-500">Pending Orders</p>
-          <p className="text-2xl font-bold text-gray-900">
+          <div className="flex items-center gap-2 mb-1">
+            <Clock className="w-4 h-4 text-amber-500" />
+            <p className="text-sm text-gray-500">Pending</p>
+          </div>
+          <p className="text-2xl font-bold text-amber-600">
             {loading ? '--' : data?.metrics.pendingOrders || 0}
           </p>
         </div>
       </div>
 
-      {/* Quota Progress */}
-      {!loading && data?.metrics.quota && (
-        <QuotaCard quota={data.metrics.quota} />
-      )}
-
-      {/* Quick Actions */}
-      <section>
-        <h2 className="text-lg font-semibold text-gray-900 mb-3">Quick Actions</h2>
-        <div className="grid grid-cols-2 gap-3">
-          <Link href="/accounts" className="card flex flex-col items-center justify-center py-6 hover:shadow-md transition-shadow">
-            <svg className="w-8 h-8 text-primary-600 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
-            </svg>
-            <span className="font-medium text-gray-900">Accounts</span>
-          </Link>
-          <Link href="/orders" className="card flex flex-col items-center justify-center py-6 hover:shadow-md transition-shadow">
-            <svg className="w-8 h-8 text-primary-600 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
-            </svg>
-            <span className="font-medium text-gray-900">Orders</span>
-          </Link>
-        </div>
-      </section>
-
-      {/* Recent Orders */}
+      {/* Orders Section with Tabs */}
       <section>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-semibold text-gray-900">Recent Orders</h2>
-          <Link href="/orders" className="text-sm text-primary-600 font-medium">
+          <h2 className="text-lg font-semibold text-gray-900">Orders</h2>
+          <Link href="/orders" className="text-sm link flex items-center gap-1">
             View All
+            <ChevronRight className="w-4 h-4" />
           </Link>
         </div>
+
+        {/* Tabs */}
+        <div className="flex gap-1 p-1 bg-gray-100 rounded-lg mb-4">
+          <button
+            onClick={() => setActiveOrderTab('draft')}
+            className={`flex-1 py-2 px-3 text-sm font-medium rounded-md transition-colors ${
+              activeOrderTab === 'draft'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            Draft
+            {data?.orders.draft.length ? (
+              <span className="ml-1.5 px-1.5 py-0.5 text-xs rounded-full bg-gray-200">
+                {data.orders.draft.length}
+              </span>
+            ) : null}
+          </button>
+          <button
+            onClick={() => setActiveOrderTab('awaitingReview')}
+            className={`flex-1 py-2 px-3 text-sm font-medium rounded-md transition-colors ${
+              activeOrderTab === 'awaitingReview'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            Awaiting Review
+            {data?.orders.awaitingReview.length ? (
+              <span className="ml-1.5 px-1.5 py-0.5 text-xs rounded-full bg-yellow-100 text-yellow-700">
+                {data.orders.awaitingReview.length}
+              </span>
+            ) : null}
+          </button>
+          <button
+            onClick={() => setActiveOrderTab('placed')}
+            className={`flex-1 py-2 px-3 text-sm font-medium rounded-md transition-colors ${
+              activeOrderTab === 'placed'
+                ? 'bg-white text-gray-900 shadow-sm'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            Placed
+            {data?.orders.placed.length ? (
+              <span className="ml-1.5 px-1.5 py-0.5 text-xs rounded-full bg-green-100 text-green-700">
+                {data.orders.placed.length}
+              </span>
+            ) : null}
+          </button>
+        </div>
+
+        {/* Order List */}
         <div className="space-y-3">
           {loading ? (
             <div className="card text-center py-6">
               <p className="text-gray-500 text-sm">Loading...</p>
             </div>
-          ) : !data?.recentOrders.length ? (
-            <div className="card text-center py-6">
-              <p className="text-gray-500 text-sm">No recent orders</p>
-              <p className="text-xs text-gray-400 mt-1">
-                Orders will appear here after placement
-              </p>
-            </div>
-          ) : (
-            data.recentOrders.map((order) => (
+          ) : (() => {
+            const orders = data?.orders[activeOrderTab] || [];
+            if (orders.length === 0) {
+              const emptyMessages: Record<OrderTab, { title: string; subtitle: string }> = {
+                draft: { title: 'No draft orders', subtitle: 'Start a new order from an account' },
+                awaitingReview: { title: 'No orders awaiting review', subtitle: 'Submitted orders appear here' },
+                placed: { title: 'No placed orders', subtitle: 'Approved orders appear here' },
+              };
+              return (
+                <div className="card text-center py-6">
+                  <p className="text-gray-500 text-sm">{emptyMessages[activeOrderTab].title}</p>
+                  <p className="text-xs text-gray-400 mt-1">{emptyMessages[activeOrderTab].subtitle}</p>
+                </div>
+              );
+            }
+            return orders.map((order) => (
               <Link
                 key={order.id}
                 href={`/orders/${order.id}`}
-                className="card flex items-center justify-between hover:shadow-md transition-shadow"
+                className="card-interactive flex items-center justify-between"
               >
-                <div>
-                  <p className="font-medium text-gray-900">{order.shopifyOrderNumber}</p>
-                  <p className="text-xs text-gray-500">
-                    {order.territoryName || 'No territory'} • {formatDate(order.placedAt)}
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium text-gray-900">{order.shopifyOrderNumber || order.orderNumber}</p>
+                  <p className="text-xs text-gray-500 truncate">
+                    {order.companyName} • {formatDate(activeOrderTab === 'draft' ? order.updatedAt : (order.placedAt || order.createdAt))}
                   </p>
                 </div>
-                <div className="text-right">
-                  <p className="font-semibold text-gray-900">
-                    {new Intl.NumberFormat('en-US', {
-                      style: 'currency',
-                      currency: order.currency,
-                    }).format(parseFloat(order.orderTotal))}
-                  </p>
-                  <span className={`inline-block px-2 py-0.5 text-xs font-medium rounded-full ${getStatusColor(order.status)}`}>
-                    {order.status || 'Pending'}
-                  </span>
+                <div className="flex items-center gap-3">
+                  <div className="text-right">
+                    <p className="font-semibold text-gray-900">
+                      {formatPrice(order.totalCents / 100, order.currency)}
+                    </p>
+                    <span className={getStatusBadge(order.status)}>
+                      {order.status === 'AWAITING_REVIEW' ? 'In Review' : order.status || 'Pending'}
+                    </span>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-gray-400" />
                 </div>
               </Link>
-            ))
-          )}
+            ));
+          })()}
         </div>
       </section>
+
+      {/* Latest Companies */}
+      {!loading && data?.latestCompanies && data.latestCompanies.length > 0 && (
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-lg font-semibold text-gray-900">Latest Companies</h2>
+            <Link href="/companies" className="text-sm link flex items-center gap-1">
+              View All
+              <ChevronRight className="w-4 h-4" />
+            </Link>
+          </div>
+          <div className="space-y-3">
+            {data.latestCompanies.map((company) => (
+              <Link
+                key={company.id}
+                href={`/companies/${company.id}`}
+                className="card-interactive flex items-center justify-between"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center">
+                    <Building2 className="w-5 h-5 text-primary-600" />
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-900">{company.name}</p>
+                    {company.accountNumber && (
+                      <p className="text-xs text-gray-500">#{company.accountNumber}</p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <p className="text-xs text-gray-500">{formatDate(company.createdAt)}</p>
+                  <ChevronRight className="w-5 h-5 text-gray-400" />
+                </div>
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

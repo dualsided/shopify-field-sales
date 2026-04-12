@@ -85,12 +85,12 @@ Create (GET) → Add items → Submit (POST /api/orders) → SUBMITTED
 
 | File | Purpose |
 |------|---------|
-| `src/app/(app)/accounts/[id]/order/page.tsx` | Cart UI (order creation) |
+| `src/app/(app)/companies/[id]/order/page.tsx` | Cart UI (order creation) |
 | `src/app/api/cart/route.ts` | Cart API (GET, PUT, DELETE) |
 
 ## UI Components
 
-### Order Page (`/accounts/[id]/order`)
+### Order Page (`/companies/[id]/order`)
 - Product search and grid
 - Variant selection modal
 - Cart summary bar (fixed bottom)

@@ -1,4 +1,4 @@
-export type PaymentProviderType = 'STRIPE' | 'SHOPIFY_TERMS' | 'SHOPIFY_VAULT';
+export type PaymentProviderType = 'SHOPIFY_TERMS' | 'SHOPIFY_VAULT';
 
 export interface PaymentMethod {
   id: string;

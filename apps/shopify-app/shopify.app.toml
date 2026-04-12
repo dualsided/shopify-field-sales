@@ -12,44 +12,28 @@ automatically_update_urls_on_dev = true
 api_version = "2026-01"
 
   [[webhooks.subscriptions]]
-  topics = [ "app/uninstalled" ]
-  uri = "/webhooks/app/uninstalled"
+  topics = [ "companies/create", "companies/update", "companies/delete" ]
+  uri = "/webhooks/companies"
+
+  [[webhooks.subscriptions]]
+  topics = [
+  "company_locations/update",
+  "company_locations/delete",
+  "company_locations/create"
+]
+  uri = "/webhooks/company-locations"
 
   [[webhooks.subscriptions]]
   topics = [ "app/scopes_update" ]
   uri = "/webhooks/app/scopes_update"
 
   [[webhooks.subscriptions]]
-  topics = [ "companies/create", "companies/update", "companies/delete" ]
-  uri = "/webhooks/companies"
-
-  [[webhooks.subscriptions]]
-  topics = [ "company_locations/create", "company_locations/update", "company_locations/delete" ]
-  uri = "/webhooks/company-locations"
-
-  [[webhooks.subscriptions]]
-  topics = [ "products/create", "products/update", "products/delete" ]
-  uri = "/webhooks/products"
-
-  # Billing webhooks
-  [[webhooks.subscriptions]]
-  topics = [ "app_subscriptions/update" ]
-  uri = "/webhooks/billing"
-
-  [[webhooks.subscriptions]]
-  topics = [ "subscription_billing_attempts/success", "subscription_billing_attempts/failure", "subscription_billing_attempts/challenged" ]
-  uri = "/webhooks/billing"
-
-  # Note: Order webhooks require protected customer data access approval
-  # See: https://shopify.dev/docs/apps/launch/protected-customer-data
-  # For now, order sync will be done via polling or manual sync
-  # Uncomment after approval:
-  # [[webhooks.subscriptions]]
-  # topics = [ "orders/create", "orders/updated", "orders/paid", "orders/fulfilled", "orders/cancelled" ]
-  # uri = "/webhooks/orders"
+  topics = [ "app/uninstalled" ]
+  uri = "/webhooks/app/uninstalled"
 
 [access_scopes]
-scopes = "read_customers,read_companies,write_companies,read_orders,write_draft_orders,read_products"
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+scopes = "read_files,read_companies,read_customers,read_orders,write_companies,write_draft_orders,write_orders,read_customer_payment_methods,write_payment_mandate"
 
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]

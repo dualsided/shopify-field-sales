@@ -1,0 +1,865 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// SHOPIFY SESSION (for embedded app OAuth)
+// ============================================
+
+// Shopify OAuth Session storage (required by @shopify/shopify-app-session-storage-prisma)
+// Field names/types are dictated by Shopify - only @map annotations can be added
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false) @map("is_online")
+  scope               String?
+  expires             DateTime?
+  accessToken         String    @map("access_token")
+  userId              BigInt?   @map("user_id")
+  firstName           String?   @map("first_name")
+  lastName            String?   @map("last_name")
+  email               String?
+  accountOwner        Boolean   @default(false) @map("account_owner")
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false) @map("email_verified")
+  refreshToken        String?   @map("refresh_token")
+  refreshTokenExpires DateTime? @map("refresh_token_expires")
+
+  @@map("sessions")
+}
+
+// ============================================
+// SHOP & AUTHENTICATION
+// ============================================
+
+model Shop {
+  id                  String          @id @default(cuid())
+  shopifyDomain       String          @unique @map("shopify_domain")
+  shopName            String          @map("shop_name")
+  accessToken         String          @map("access_token")
+  scopes              String
+  logoUrl             String?         @map("logo_url")
+  accentColor         String?         @map("accent_color")
+  paymentStrategy     PaymentStrategy @default(SHOPIFY_TERMS) @map("payment_strategy")
+  config              Json?
+  isActive            Boolean         @default(true) @map("is_active")
+
+  // Shopify plan detection
+  shopifyPlan         String?         @map("shopify_plan")
+  hasManagedCompanies Boolean         @default(false) @map("has_managed_companies")
+  planDetectedAt      DateTime?       @map("plan_detected_at")
+
+  // Product inclusion settings
+  productInclusionTag String?         @map("product_inclusion_tag")
+
+  // Order numbering settings
+  orderPrefix       String    @default("FS") @map("order_prefix")
+  orderNumberStart  Int       @default(1) @map("order_number_start")
+
+  // Billing
+  billingPlan           BillingPlan?   @map("billing_plan")
+  billingStatus         BillingStatus  @default(INACTIVE) @map("billing_status")
+  shopifySubscriptionId String?        @map("shopify_subscription_id")
+  usageLineItemId       String?        @map("usage_line_item_id")
+  subscriptionStatus    String?        @map("subscription_status")
+  currentPeriodStart    DateTime?      @map("current_period_start")
+  currentPeriodEnd      DateTime?      @map("current_period_end")
+  trialEndsAt           DateTime?      @map("trial_ends_at")
+
+  createdAt           DateTime        @default(now()) @map("created_at")
+  updatedAt           DateTime        @updatedAt @map("updated_at")
+
+  // Relations
+  salesReps       SalesRep[]
+  territories     Territory[]
+  companies       Company[]
+  paymentMethods  PaymentMethod[]
+  cartSessions    CartSession[]
+  orders          Order[]
+  products        Product[]
+  shippingMethods ShippingMethod[]
+  promotions      Promotion[]
+  quotas          RepQuota[]
+  billingPeriods  BillingPeriod[]
+  catalogs        Catalog[]
+
+  @@map("shops")
+}
+
+enum PaymentStrategy {
+  SHOPIFY_TERMS @map("shopify_terms")
+  SHOPIFY_VAULT @map("shopify_vault")
+}
+
+// ============================================
+// BILLING
+// ============================================
+
+enum BillingPlan {
+  BASIC @map("basic")
+  GROW  @map("grow")
+  PRO   @map("pro")
+  PLUS  @map("plus")
+}
+
+enum BillingStatus {
+  INACTIVE  @map("inactive")
+  TRIAL     @map("trial")
+  ACTIVE    @map("active")
+  PAST_DUE  @map("past_due")
+  CANCELLED @map("cancelled")
+}
+
+model SalesRep {
+  id           String    @id @default(cuid())
+  shopId       String    @map("shop_id")
+  email        String
+  firstName    String    @map("first_name")
+  lastName     String    @map("last_name")
+  phone        String?
+  role         RepRole   @default(REP)
+  passwordHash String?   @map("password_hash")
+  isActive     Boolean   @default(true) @map("is_active")
+
+  // Order approval settings
+  // null = no approval needed (trusted rep)
+  // 0 = all orders need approval
+  // > 0 = orders with subtotal >= threshold need approval
+  approvalThresholdCents Int? @map("approval_threshold_cents")
+
+  // Billing tracking
+  activatedAt   DateTime? @map("activated_at")
+  deactivatedAt DateTime? @map("deactivated_at")
+
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  shop              Shop           @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  repTerritories    RepTerritory[]
+  assignedCompanies Company[]      @relation("AssignedRep")
+  cartSessions      CartSession[]
+  orders            Order[]
+  quotas            RepQuota[]
+
+  @@unique([shopId, email])
+  @@index([shopId])
+  @@map("sales_reps")
+}
+
+enum RepRole {
+  REP     @map("rep")
+  MANAGER @map("manager")
+  ADMIN   @map("admin")
+}
+
+// ============================================
+// TERRITORIES
+// ============================================
+
+model Territory {
+  id          String   @id @default(cuid())
+  shopId      String   @map("shop_id")
+  name        String
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  shop           Shop               @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  zipcodes       TerritoryZipcode[]
+  states         TerritoryState[]
+  repTerritories RepTerritory[]
+  companies      Company[]
+  locations      CompanyLocation[]
+
+  @@index([shopId])
+  @@map("territories")
+}
+
+model TerritoryZipcode {
+  id          String @id @default(cuid())
+  territoryId String @map("territory_id")
+  zipcode     String
+
+  territory Territory @relation(fields: [territoryId], references: [id], onDelete: Cascade)
+
+  @@unique([territoryId, zipcode])
+  @@index([zipcode])
+  @@map("territory_zipcodes")
+}
+
+model TerritoryState {
+  id          String @id @default(cuid())
+  territoryId String @map("territory_id")
+  stateCode   String @map("state_code")
+  stateName   String @map("state_name")
+
+  territory Territory @relation(fields: [territoryId], references: [id], onDelete: Cascade)
+
+  @@unique([territoryId, stateCode])
+  @@index([stateCode])
+  @@map("territory_states")
+}
+
+model RepTerritory {
+  id          String   @id @default(cuid())
+  repId       String   @map("rep_id")
+  territoryId String   @map("territory_id")
+  isPrimary   Boolean  @default(false) @map("is_primary")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  rep       SalesRep  @relation(fields: [repId], references: [id], onDelete: Cascade)
+  territory Territory @relation(fields: [territoryId], references: [id], onDelete: Cascade)
+
+  @@unique([repId, territoryId])
+  @@map("rep_territories")
+}
+
+// ============================================
+// COMPANIES
+// ============================================
+
+model Company {
+  id               String       @id @default(cuid())
+  shopId           String       @map("shop_id")
+  shopifyCompanyId String?      @map("shopify_company_id")
+  name             String
+  accountNumber    String?      @map("account_number")
+  paymentTerms     PaymentTerms @default(DUE_ON_ORDER) @map("payment_terms")
+  territoryId      String?      @map("territory_id")
+  assignedRepId    String?      @map("assigned_rep_id")
+  syncStatus       SyncStatus   @default(SYNCED) @map("sync_status")
+  lastSyncedAt     DateTime?    @map("last_synced_at")
+  isActive         Boolean      @default(true) @map("is_active")
+  createdAt        DateTime     @default(now()) @map("created_at")
+  updatedAt        DateTime     @updatedAt @map("updated_at")
+
+  // Relations
+  shop           Shop              @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  territory      Territory?        @relation(fields: [territoryId], references: [id])
+  assignedRep    SalesRep?         @relation("AssignedRep", fields: [assignedRepId], references: [id])
+  locations      CompanyLocation[]
+  contacts       CompanyContact[]
+  paymentMethods PaymentMethod[]
+  cartSessions   CartSession[]
+  orders         Order[]
+
+  @@unique([shopId, shopifyCompanyId])
+  @@unique([shopId, accountNumber])
+  @@index([territoryId])
+  @@index([assignedRepId])
+  @@index([shopId, isActive])
+  @@map("companies")
+}
+
+enum PaymentTerms {
+  DUE_ON_ORDER       @map("due_on_order")
+  DUE_ON_RECEIPT     @map("due_on_receipt")
+  DUE_ON_FULFILLMENT @map("due_on_fulfillment")
+  NET_15             @map("net_15")
+  NET_30             @map("net_30")
+  NET_45             @map("net_45")
+  NET_60             @map("net_60")
+}
+
+enum SyncStatus {
+  SYNCED     @map("synced")
+  PENDING    @map("pending")
+  SYNCING    @map("syncing")
+  ERROR      @map("error")
+  NOT_SYNCED @map("not_synced")
+}
+
+// ============================================
+// COMPANY LOCATIONS
+// ============================================
+
+model CompanyLocation {
+  id                String   @id @default(cuid())
+  companyId         String   @map("company_id")
+  shopifyLocationId String?  @map("shopify_location_id")
+  territoryId       String?  @map("territory_id")
+  name              String
+  isPrimary         Boolean  @default(false) @map("is_primary")
+  address1          String?
+  address2          String?
+  city              String?
+  province          String?
+  provinceCode      String?  @map("province_code")
+  zipcode           String?
+  country           String   @default("US")
+  countryCode       String   @default("US") @map("country_code")
+  phone             String?
+  isShippingAddress Boolean  @default(true) @map("is_shipping_address")
+  isBillingAddress  Boolean  @default(true) @map("is_billing_address")
+
+  // Payment terms from Shopify B2B buyerExperienceConfiguration
+  paymentTermsType  String?  @map("payment_terms_type") // NET_30, NET_60, DUE_ON_RECEIPT, etc.
+  paymentTermsDays  Int?     @map("payment_terms_days") // Number of days for NET terms
+  checkoutToDraft   Boolean  @default(false) @map("checkout_to_draft") // Requires merchant review
+
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  company        Company    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  territory      Territory? @relation(fields: [territoryId], references: [id])
+  shippingOrders Order[]    @relation("ShippingLocation")
+  billingOrders  Order[]    @relation("BillingLocation")
+  catalogs       CompanyLocationCatalog[]
+
+  @@unique([companyId, shopifyLocationId])
+  @@index([zipcode])
+  @@index([territoryId])
+  @@map("company_locations")
+}
+
+// ============================================
+// COMPANY CONTACTS
+// ============================================
+
+model CompanyContact {
+  id                String   @id @default(cuid())
+  companyId         String   @map("company_id")
+  shopifyContactId  String?  @map("shopify_contact_id")
+  shopifyCustomerId String?  @map("shopify_customer_id")
+  firstName         String   @map("first_name")
+  lastName          String   @map("last_name")
+  email             String
+  phone             String?
+  title             String?
+  isPrimary         Boolean  @default(false) @map("is_primary")
+  canPlaceOrders    Boolean  @default(true) @map("can_place_orders")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  company        Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  paymentMethods PaymentMethod[]
+  orders         Order[]
+
+  @@unique([companyId, email])
+  @@unique([companyId, shopifyContactId])
+  @@map("company_contacts")
+}
+
+// ============================================
+// CATALOGS (B2B Pricing)
+// ============================================
+
+model Catalog {
+  id                 String        @id @default(cuid())
+  shopId             String        @map("shop_id")
+  shopifyCatalogId   String        @map("shopify_catalog_id")
+  shopifyPriceListId String?       @map("shopify_price_list_id")
+  title              String
+  status             CatalogStatus @default(ACTIVE)
+  currencyCode       String        @default("USD") @map("currency_code")
+
+  syncedAt           DateTime      @map("synced_at")
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  shop      Shop                     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  locations CompanyLocationCatalog[]
+  items     CatalogItem[]
+
+  @@unique([shopId, shopifyCatalogId])
+  @@index([shopId, status])
+  @@map("catalogs")
+}
+
+enum CatalogStatus {
+  ACTIVE   @map("active")
+  DRAFT    @map("draft")
+  ARCHIVED @map("archived")
+}
+
+// Junction table: CompanyLocation <-> Catalog (many-to-many)
+model CompanyLocationCatalog {
+  companyLocationId String   @map("company_location_id")
+  catalogId         String   @map("catalog_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  companyLocation CompanyLocation @relation(fields: [companyLocationId], references: [id], onDelete: Cascade)
+  catalog         Catalog         @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+
+  @@id([companyLocationId, catalogId])
+  @@index([catalogId])
+  @@map("company_location_catalogs")
+}
+
+// Catalog items: availability + price override per variant
+model CatalogItem {
+  id                  String   @id @default(cuid())
+  catalogId           String   @map("catalog_id")
+  shopifyVariantId    String   @map("shopify_variant_id")
+  shopifyProductId    String   @map("shopify_product_id")
+
+  priceCents          Int      @map("price_cents")
+  compareAtPriceCents Int?     @map("compare_at_price_cents")
+
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  catalog Catalog @relation(fields: [catalogId], references: [id], onDelete: Cascade)
+
+  @@unique([catalogId, shopifyVariantId])
+  @@index([shopifyVariantId])
+  @@index([catalogId, shopifyProductId])
+  @@map("catalog_items")
+}
+
+// ============================================
+// PAYMENTS
+// ============================================
+
+model PaymentMethod {
+  id                 String          @id @default(cuid())
+  shopId             String          @map("shop_id")
+  companyId          String          @map("company_id")
+  contactId          String?         @map("contact_id")
+  provider           PaymentProvider
+  externalCustomerId String?         @map("external_customer_id")
+  externalMethodId   String          @map("external_method_id")
+  last4              String?
+  brand              String?
+  expiryMonth        Int?            @map("expiry_month")
+  expiryYear         Int?            @map("expiry_year")
+  isDefault          Boolean         @default(false) @map("is_default")
+  isActive           Boolean         @default(true) @map("is_active")
+  createdAt          DateTime        @default(now()) @map("created_at")
+  updatedAt          DateTime        @updatedAt @map("updated_at")
+
+  // Relations
+  shop    Shop            @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  company Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  contact CompanyContact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  @@unique([shopId, companyId, externalMethodId])
+  @@index([companyId, isDefault])
+  @@index([contactId])
+  @@map("payment_methods")
+}
+
+enum PaymentProvider {
+  SHOPIFY_TERMS @map("shopify_terms")
+  SHOPIFY_VAULT @map("shopify_vault")
+}
+
+// ============================================
+// CART & ORDERS
+// ============================================
+
+model CartSession {
+  id            String     @id @default(cuid())
+  shopId        String     @map("shop_id")
+  repId         String     @map("rep_id")
+  companyId     String     @map("company_id")
+  lineItems     Json       @map("line_items")
+  discountCodes String[]   @default([]) @map("discount_codes")
+  notes         String?
+  status        CartStatus @default(ACTIVE)
+  expiresAt     DateTime   @map("expires_at")
+  createdAt     DateTime   @default(now()) @map("created_at")
+  updatedAt     DateTime   @updatedAt @map("updated_at")
+
+  // Relations
+  shop    Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  rep     SalesRep @relation(fields: [repId], references: [id], onDelete: Cascade)
+  company Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, repId])
+  @@index([companyId])
+  @@map("cart_sessions")
+}
+
+enum CartStatus {
+  ACTIVE    @map("active")
+  SUBMITTED @map("submitted")
+  ABANDONED @map("abandoned")
+}
+
+model Order {
+  id                  String       @id @default(cuid())
+  shopId              String       @map("shop_id")
+  companyId           String       @map("company_id")
+  salesRepId          String       @map("sales_rep_id")
+  contactId           String?      @map("contact_id")
+  shippingLocationId  String?      @map("shipping_location_id")
+  billingLocationId   String?      @map("billing_location_id")
+
+  // Shopify integration
+  shopifyDraftOrderId String?      @map("shopify_draft_order_id")
+  shopifyOrderId      String?      @map("shopify_order_id")
+  shopifyOrderNumber  String?      @map("shopify_order_number")
+
+  // Order details
+  orderNumber         String       @map("order_number")
+  status              OrderStatus  @default(DRAFT)
+  note                String?
+  poNumber            String?      @map("po_number")
+
+  // Shipping
+  shippingMethodId    String?      @map("shipping_method_id")
+
+  // Totals (stored in cents)
+  subtotalCents       Int          @default(0) @map("subtotal_cents")
+  discountCents       Int          @default(0) @map("discount_cents")
+  shippingCents       Int          @default(0) @map("shipping_cents")
+  taxCents            Int          @default(0) @map("tax_cents")
+  totalCents          Int          @default(0) @map("total_cents")
+  currency            String       @default("USD")
+
+  // Applied promotions (stores IDs for ORDER_TOTAL and SHIPPING scope promotions)
+  appliedPromotionIds String[]     @default([]) @map("applied_promotion_ids")
+
+  // Payment
+  paymentTerms        PaymentTerms @default(DUE_ON_ORDER) @map("payment_terms")
+  paymentDueDate      DateTime?    @map("payment_due_date")
+  paymentMethodId     String?      @map("payment_method_id") // Selected vaulted card
+  shopifyInvoiceId    String?      @map("shopify_invoice_id") // If invoice sent instead of card charge
+  paidAt              DateTime?    @map("paid_at")
+
+  // Timestamps
+  placedAt            DateTime?    @map("placed_at")
+  cancelledAt         DateTime?    @map("cancelled_at")
+  refundedAt          DateTime?    @map("refunded_at")
+  deletedAt           DateTime?    @map("deleted_at")
+  createdAt           DateTime     @default(now()) @map("created_at")
+  updatedAt           DateTime     @updatedAt @map("updated_at")
+
+  // Usage billing tracking (for Shopify app billing)
+  revenueShareReportedAt   DateTime? @map("revenue_share_reported_at")
+  revenueShareUsageRecordId String?  @map("revenue_share_usage_record_id")
+
+  // Relations
+  shop             Shop             @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  company          Company          @relation(fields: [companyId], references: [id])
+  salesRep         SalesRep         @relation(fields: [salesRepId], references: [id])
+  contact          CompanyContact?  @relation(fields: [contactId], references: [id])
+  shippingLocation CompanyLocation? @relation("ShippingLocation", fields: [shippingLocationId], references: [id])
+  billingLocation  CompanyLocation? @relation("BillingLocation", fields: [billingLocationId], references: [id])
+  shippingMethod   ShippingMethod?  @relation(fields: [shippingMethodId], references: [id])
+  lineItems        OrderLineItem[]
+  billedOrder      BilledOrder?
+  timelineEvents   OrderTimelineEvent[]
+
+  @@unique([shopId, orderNumber])
+  @@unique([shopId, shopifyDraftOrderId])
+  @@unique([shopId, shopifyOrderId])
+  @@index([shopId, status])
+  @@index([companyId])
+  @@index([salesRepId])
+  @@index([createdAt])
+  @@map("orders")
+}
+
+// ============================================
+// ORDER TIMELINE
+// ============================================
+
+// Timeline events are tracked starting when order is submitted for approval (AWAITING_REVIEW)
+// Before that, only "draft_created" is recorded. After submission, all changes are tracked.
+model OrderTimelineEvent {
+  id          String     @id @default(cuid())
+  orderId     String     @map("order_id")
+  authorType  AuthorType @map("author_type")
+  authorId    String?    @map("author_id") // SalesRep ID or null for system/admin
+  authorName  String     @map("author_name")
+  eventType   String     @map("event_type") // e.g., "submitted", "approved", "line_item_added"
+  metadata    Json?      // Flexible data: { productTitle, oldQty, newQty, etc. }
+  comment     String?    // Optional user comment (for submit, approve, decline, or manual comments)
+  createdAt   DateTime   @default(now()) @map("created_at")
+
+  // Relations
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("order_timeline_events")
+}
+
+enum AuthorType {
+  SALES_REP @map("sales_rep")
+  ADMIN     @map("admin")
+  SYSTEM    @map("system")
+}
+
+enum OrderStatus {
+  DRAFT           @map("draft")
+  AWAITING_REVIEW @map("awaiting_review")
+  PENDING         @map("pending")
+  PAID            @map("paid")
+  CANCELLED       @map("cancelled")
+  REFUNDED        @map("refunded")
+}
+
+model OrderLineItem {
+  id                String   @id @default(cuid())
+  orderId           String   @map("order_id")
+
+  // Product info (denormalized)
+  shopifyProductId  String?  @map("shopify_product_id")
+  shopifyVariantId  String?  @map("shopify_variant_id")
+  sku               String?
+  title             String
+  variantTitle      String?  @map("variant_title")
+  imageUrl          String?  @map("image_url")
+
+  // Quantity and pricing (cents)
+  quantity          Int
+  unitPriceCents    Int      @map("unit_price_cents")
+  discountCents     Int      @default(0) @map("discount_cents")
+  taxCents          Int      @default(0) @map("tax_cents")
+  totalCents        Int      @map("total_cents")
+
+  // Promotion tracking
+  isPromotionItem   Boolean  @default(false) @map("is_promotion_item")
+  promotionId       String?  @map("promotion_id")
+  promotionName     String?  @map("promotion_name")
+
+  // Fulfillment
+  fulfilledQuantity Int      @default(0) @map("fulfilled_quantity")
+
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("order_line_items")
+}
+
+// ============================================
+// PRODUCTS (synced from Shopify)
+// ============================================
+
+model Product {
+  id                 String        @id @default(cuid())
+  shopId             String        @map("shop_id")
+  shopifyProductId   String        @map("shopify_product_id")
+  title              String
+  description        String?
+  imageUrl           String?       @map("image_url")
+  productType        String?       @map("product_type")
+  vendor             String?
+  tags               String[]      @default([])
+  status             ProductStatus @default(ACTIVE)
+  isActive           Boolean       @default(true) @map("is_active")
+  enabledForFieldApp Boolean       @default(false) @map("enabled_for_field_app")
+  syncedAt           DateTime      @map("synced_at")
+  createdAt          DateTime      @default(now()) @map("created_at")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  shop     Shop             @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  variants ProductVariant[]
+
+  @@unique([shopId, shopifyProductId])
+  @@index([shopId, status])
+  @@index([shopId, isActive])
+  @@index([shopId, enabledForFieldApp])
+  @@map("products")
+}
+
+enum ProductStatus {
+  ACTIVE   @map("active")
+  ARCHIVED @map("archived")
+  DRAFT    @map("draft")
+}
+
+model ProductVariant {
+  id                String   @id @default(cuid())
+  productId         String   @map("product_id")
+  shopifyVariantId  String   @map("shopify_variant_id")
+  title             String
+  sku               String?
+  priceCents        Int      @map("price_cents")
+  comparePriceCents Int?     @map("compare_price_cents")
+  imageUrl          String?  @map("image_url")
+  inventoryQuantity Int?     @map("inventory_quantity")
+  isAvailable       Boolean  @default(true) @map("is_available")
+  position          Int      @default(0)
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([productId, shopifyVariantId])
+  @@index([sku])
+  @@map("product_variants")
+}
+
+// ============================================
+// SHIPPING METHODS
+// ============================================
+
+model ShippingMethod {
+  id        String   @id @default(cuid())
+  shopId    String   @map("shop_id")
+  title     String
+  method    String
+  priceCents Int     @map("price_cents")
+  isActive  Boolean  @default(true) @map("is_active")
+  position  Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  shop   Shop    @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  orders Order[]
+
+  @@index([shopId, isActive])
+  @@map("shipping_methods")
+}
+
+// ============================================
+// PROMOTIONS
+// ============================================
+
+model Promotion {
+  id          String          @id @default(cuid())
+  shopId      String          @map("shop_id")
+  name        String
+  description String?
+  type        PromotionType
+  scope       PromotionScope  @default(LINE_ITEM)  // Where the discount applies
+  value       Decimal         @db.Decimal(10, 2)   // Discount value (percentage or cents)
+
+  // Spend threshold conditions
+  minOrderCents Int? @map("min_order_cents") // Minimum order amount for spend-based promotions
+
+  // Buy X Get Y specific
+  buyQuantity    Int?     @map("buy_quantity")     // Quantity to buy
+  buyProductIds  String[] @default([]) @map("buy_product_ids")  // Products that qualify for "buy"
+  getQuantity    Int?     @map("get_quantity")     // Quantity to get free/discounted
+  getProductIds  String[] @default([]) @map("get_product_ids")  // Products that are free/discounted
+
+  // Validity
+  startsAt  DateTime  @map("starts_at")
+  endsAt    DateTime? @map("ends_at")
+  isActive  Boolean   @default(true) @map("is_active")
+  priority  Int       @default(0)
+  stackable Boolean   @default(false)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, isActive])
+  @@index([startsAt, endsAt])
+  @@map("promotions")
+}
+
+enum PromotionType {
+  PERCENTAGE      @map("percentage")       // Spend over X get Y% off
+  FIXED_AMOUNT    @map("fixed_amount")     // Spend over X get $Y off
+  BUY_X_GET_Y     @map("buy_x_get_y")      // Buy X of product A, get Y of product B free
+  SPEND_GET_FREE  @map("spend_get_free")   // Spend over X get qty Y of product free
+}
+
+enum PromotionScope {
+  LINE_ITEM       @map("line_item")        // Discount applied to line items (free products)
+  ORDER_TOTAL     @map("order_total")      // Discount applied to order subtotal
+  SHIPPING        @map("shipping")         // Discount applied to shipping cost
+}
+
+// ============================================
+// QUOTAS
+// ============================================
+
+model RepQuota {
+  id          String   @id @default(cuid())
+  shopId      String   @map("shop_id")
+  repId       String   @map("rep_id")
+  year        Int
+  month       Int
+  targetCents Int      @map("target_cents")
+  note        String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  shop     Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  salesRep SalesRep @relation(fields: [repId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, repId, year, month])
+  @@index([shopId, year, month])
+  @@index([repId])
+  @@map("rep_quotas")
+}
+
+// ============================================
+// BILLING PERIODS & USAGE
+// ============================================
+
+model BillingPeriod {
+  id                   String      @id @default(cuid())
+  shopId               String      @map("shop_id")
+  periodStart          DateTime    @map("period_start")
+  periodEnd            DateTime    @map("period_end")
+  plan                 BillingPlan
+
+  // Rep charges
+  includedReps         Int         @map("included_reps")
+  activeRepCount       Int         @default(0) @map("active_rep_count")
+  extraRepCount        Int         @default(0) @map("extra_rep_count")
+  perRepCents          Int         @map("per_rep_cents")
+  repChargesCents      Int         @default(0) @map("rep_charges_cents")
+
+  // Revenue share
+  orderRevenueCents    Int         @default(0) @map("order_revenue_cents")
+  revenueSharePercent  Float       @map("revenue_share_percent")
+  revenueShareCents    Int         @default(0) @map("revenue_share_cents")
+
+  // Real-time usage tracking
+  extraRepsCharged     Int         @default(0) @map("extra_reps_charged") // Number of extra reps reported to Shopify
+
+  // Shopify usage record IDs (legacy - for batch reporting)
+  repUsageRecordId     String?     @map("rep_usage_record_id")
+  revenueUsageRecordId String?     @map("revenue_usage_record_id")
+
+  // Status
+  status               String      @default("open")
+  finalizedAt          DateTime?   @map("finalized_at")
+
+  createdAt            DateTime    @default(now()) @map("created_at")
+  updatedAt            DateTime    @updatedAt @map("updated_at")
+
+  // Relations
+  shop   Shop          @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  orders BilledOrder[]
+
+  @@unique([shopId, periodStart])
+  @@index([shopId, status])
+  @@map("billing_periods")
+}
+
+model BilledOrder {
+  id                String   @id @default(cuid())
+  billingPeriodId   String   @map("billing_period_id")
+  orderId           String   @unique @map("order_id")
+  totalCents        Int      @map("total_cents")
+  revenueShareCents Int      @map("revenue_share_cents")
+  billedAt          DateTime @default(now()) @map("billed_at")
+
+  // Relations
+  billingPeriod BillingPeriod @relation(fields: [billingPeriodId], references: [id], onDelete: Cascade)
+  order         Order         @relation(fields: [orderId], references: [id])
+
+  @@index([billingPeriodId])
+  @@map("billed_orders")
+}

@@ -1,7 +1,54 @@
-import prisma from "../db.server";
+import { prisma } from "@field-sales/database";
 import type { PaymentTerms } from "@prisma/client";
 import { findTerritoryByLocation } from "./territory.server";
 import { fromGid } from "../lib/shopify-ids";
+
+// GraphQL query to count companies in Shopify
+const COMPANIES_COUNT_QUERY = `#graphql
+  query GetCompaniesCount {
+    companies(first: 25) {
+      edges {
+        node {
+          id
+        }
+      }
+      pageInfo {
+        hasNextPage
+      }
+    }
+  }
+`;
+
+interface CompaniesCountResponse {
+  data?: {
+    companies?: {
+      edges: Array<{ node: { id: string } }>;
+      pageInfo: { hasNextPage: boolean };
+    };
+  };
+}
+
+/**
+ * Get approximate count of companies in Shopify.
+ * Returns actual count up to 25, or 25+ if there are more.
+ */
+export async function getShopifyCompaniesCount(
+  admin: { graphql: (query: string) => Promise<Response> }
+): Promise<number> {
+  try {
+    const response = await admin.graphql(COMPANIES_COUNT_QUERY);
+    const data = (await response.json()) as CompaniesCountResponse;
+    const count = data.data?.companies?.edges?.length || 0;
+    // If there are more pages, return 25 to indicate "25+"
+    if (data.data?.companies?.pageInfo?.hasNextPage) {
+      return 25;
+    }
+    return count;
+  } catch (error) {
+    console.error("[Company] Failed to fetch Shopify companies count:", error);
+    return 0;
+  }
+}
 
 // GraphQL query to fetch all companies with locations
 const COMPANIES_QUERY = `#graphql
@@ -335,6 +382,8 @@ export interface CompanyListItem {
   contactCount: number;
   isActive: boolean;
   isShopifyManaged: boolean;
+  territoryNames: string[];
+  hasManualRepAssignment: boolean;
 }
 
 export interface CompanyDetail {
@@ -402,28 +451,83 @@ export interface UpdateCompanyInput {
 }
 
 // Queries
-export async function getCompanies(shopId: string): Promise<CompanyListItem[]> {
-  const companies = await prisma.company.findMany({
-    where: {
-      shopId,
-      isActive: true,
-    },
-    include: {
-      locations: { select: { id: true } },
-      contacts: { select: { id: true } },
-    },
-    orderBy: { name: "asc" },
+export interface GetCompaniesOptions {
+  search?: string;
+  type?: "all" | "shopify" | "internal";
+  limit?: number;
+}
+
+export interface GetCompaniesResult {
+  companies: CompanyListItem[];
+  totalCount: number;
+}
+
+export async function getCompanies(
+  shopId: string,
+  options: GetCompaniesOptions = {}
+): Promise<GetCompaniesResult> {
+  const { search, type = "all", limit = 50 } = options;
+
+  // Build filter conditions
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const whereConditions: any = {
+    shopId,
+    isActive: true,
+  };
+
+  if (search) {
+    whereConditions.OR = [
+      { name: { contains: search, mode: "insensitive" } },
+      { accountNumber: { contains: search, mode: "insensitive" } },
+    ];
+  }
+
+  if (type === "shopify") {
+    whereConditions.shopifyCompanyId = { not: null };
+  } else if (type === "internal") {
+    whereConditions.shopifyCompanyId = null;
+  }
+
+  const [companies, totalCount] = await Promise.all([
+    prisma.company.findMany({
+      where: whereConditions,
+      include: {
+        locations: {
+          select: {
+            id: true,
+            territory: { select: { name: true } },
+          },
+        },
+        contacts: { select: { id: true } },
+      },
+      orderBy: { name: "asc" },
+      take: limit,
+    }),
+    prisma.company.count({ where: { shopId, isActive: true } }),
+  ]);
+
+  const formattedCompanies = companies.map((c) => {
+    // Get unique territory names from locations
+    const territoryNames = [...new Set(
+      c.locations
+        .map((loc) => loc.territory?.name)
+        .filter((name): name is string => !!name)
+    )];
+
+    return {
+      id: c.id,
+      name: c.name,
+      accountNumber: c.accountNumber,
+      locationCount: c.locations.length,
+      contactCount: c.contacts.length,
+      isActive: c.isActive,
+      isShopifyManaged: c.shopifyCompanyId !== null,
+      territoryNames,
+      hasManualRepAssignment: c.assignedRepId !== null,
+    };
   });
 
-  return companies.map((c) => ({
-    id: c.id,
-    name: c.name,
-    accountNumber: c.accountNumber,
-    locationCount: c.locations.length,
-    contactCount: c.contacts.length,
-    isActive: c.isActive,
-    isShopifyManaged: c.shopifyCompanyId !== null,
-  }));
+  return { companies: formattedCompanies, totalCount };
 }
 
 export async function getCompanyById(

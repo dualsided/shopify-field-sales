@@ -22,10 +22,28 @@ Multi-tenant B2B field sales ordering platform. Sales reps use a mobile-first we
    - All Shopify Admin GraphQL calls via stored access tokens
 
 ### Infrastructure
-- **Database**: PostgreSQL on Render
+- **Database**: PostgreSQL on Render (shared between both apps)
 - **Cache**: Redis for sessions, product cache, rate limiting
 - **Hosting**: Render (both apps + DB + Redis)
-- **Repo**: Monorepo structure, GitHub, WebStorm IDE
+- **Repo**: Monorepo structure with npm workspaces
+
+### Monorepo Structure
+```
+shopify-field-sales/
+├── apps/
+│   ├── field-app/        # Next.js mobile-first rep app (port 3001)
+│   └── shopify-app/      # React Router embedded Shopify app
+├── packages/
+│   └── database/         # Shared Prisma schema & client
+│       ├── prisma/
+│       │   ├── schema.prisma  # THE database schema
+│       │   ├── migrations/
+│       │   └── seed.ts
+│       └── src/
+│           ├── client.ts      # Prisma client singleton
+│           └── index.ts       # Exports client + types
+└── package.json          # Workspace root with db:* scripts
+```
 
 ## Tech Stack
 - Next.js 14+ (App Router, Server Components)
@@ -34,7 +52,6 @@ Multi-tenant B2B field sales ordering platform. Sales reps use a mobile-first we
 - Prisma ORM (PostgreSQL)
 - Shopify Admin GraphQL API (2025-01)
 - Shopify App Bridge + Polaris (embedded app)
-- Stripe SDK (payment vaulting)
 - Redis (ioredis)
 
 ## Multi-Tenant Model
@@ -43,10 +60,9 @@ Middleware resolves tenant from rep session on every request.
 Shopify access tokens stored encrypted in tenants table.
 
 ## Key Abstractions
-- **PaymentProvider** interface (see packages/payment-provider/)
+- **PaymentProvider** interface
   - ShopifyTermsProvider — B2B payment terms (net 30/60)
-  - StripeVaultProvider — Vault cards in Stripe, charge on order
-  - ShopifyVaultProvider — Future: when Shopify exposes vaulting API
+  - ShopifyVaultProvider — Vault cards via Shopify, charge with orderCreateMandatePayment
 - **CompanyRepository** interface (API now, offline SQLite later)
 - **ShopifyService** (tenant-scoped GraphQL client)
 - **TerritoryService** (zip → company resolution)
@@ -82,8 +98,9 @@ Shopify access tokens stored encrypted in tenants table.
 ### 5. Payments (abstracted)
 - PaymentProvider interface with vaultPaymentMethod, getPaymentMethods, processOrderPayment, removePaymentMethod
 - Option A (Shopify Terms): draftOrderComplete with paymentTerms, Shopify sends invoice
-- Option B (Stripe): charge Stripe payment method, draftOrderComplete, orderMarkAsPaid
+- Option B (Shopify Vault): vault card via Shopify, charge with orderCreateMandatePayment
 - Merchant configures which option in Shopify embedded app
+- Requires `write_payment_mandate` scope for vaulted card payments
 
 ### 6. Webhooks
 - Shopify → Main App webhook endpoints
@@ -116,6 +133,57 @@ Shopify access tokens stored encrypted in tenants table.
 **Sprint 4 — Payments**: Payment abstraction layer, Shopify Terms provider, Stripe Vault provider, payment config in embedded app.
 
 **Sprint 5 — Polish & PWA**: Dashboard KPIs, PWA manifest + service worker, mobile UX refinement.
+
+## Database Management
+
+**CRITICAL:** Both apps share a single database via `@field-sales/database` package. Never create separate Prisma schemas in individual apps.
+
+### Schema Location
+Edit `packages/database/prisma/schema.prisma` — this is the single source of truth.
+
+### Commands (run from monorepo root)
+```bash
+npm run db:push       # Push schema changes (dev - no migration file)
+npm run db:migrate    # Create migration file (for production)
+npm run db:generate   # Regenerate Prisma client only
+npm run db:seed       # Run seed script
+npm run db:studio     # Open Prisma Studio GUI
+```
+
+### Making Schema Changes
+1. Edit `packages/database/prisma/schema.prisma`
+2. Run `npm run db:push` from monorepo root
+3. Both apps automatically get updated types via shared package
+
+### Importing in Apps
+```typescript
+// field-app
+import { prisma } from '@/lib/db/prisma';
+import type { Company, Order } from '@field-sales/database';
+
+// shopify-app
+import prisma from "../db.server";
+import type { Shop, SalesRep } from "@field-sales/database";
+```
+
+### Adding New Models
+Always include `shopId` for multi-tenancy and add relation to Shop model:
+```prisma
+model NewModel {
+  id        String   @id @default(cuid())
+  shopId    String
+  // ... fields
+  shop      Shop     @relation(fields: [shopId], references: [id])
+  @@index([shopId])
+  @@map("new_models")
+}
+```
+
+### Reset Database (dev only)
+```bash
+cd packages/database
+npx prisma migrate reset  # Drops data, re-runs migrations + seed
+```
 
 ## Current Sprint
 [See STATUS.md for current work]

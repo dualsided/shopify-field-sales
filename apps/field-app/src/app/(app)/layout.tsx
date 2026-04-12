@@ -1,4 +1,5 @@
 import { BottomNav } from '@/components/ui/BottomNav';
+import { BrandingProvider, Header, SaveBarProvider, ToastProvider } from '@/components/ui';
 
 export default function AppLayout({
   children,
@@ -6,9 +7,16 @@ export default function AppLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen pb-20 safe-bottom">
-      <main className="px-4 py-4">{children}</main>
-      <BottomNav />
-    </div>
+    <BrandingProvider>
+      <SaveBarProvider>
+        <ToastProvider>
+          <div className="min-h-screen flex flex-col px-4">
+            <Header />
+            <main className="flex-1 pb-28">{children}</main>
+            <BottomNav />
+          </div>
+        </ToastProvider>
+      </SaveBarProvider>
+    </BrandingProvider>
   );
 }

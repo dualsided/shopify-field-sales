@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/prisma';
 import { getAuthContext, requireRole } from '@/lib/auth';
-import type { ApiError, Company } from '@/types';
+import type { ApiError } from '@/types';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -22,6 +22,12 @@ export async function GET(request: Request, { params }: RouteParams) {
       include: {
         territory: true,
         assignedRep: true,
+        contacts: {
+          orderBy: [{ isPrimary: 'desc' }, { firstName: 'asc' }],
+        },
+        locations: {
+          orderBy: [{ isPrimary: 'desc' }, { name: 'asc' }],
+        },
       },
     });
 
@@ -49,7 +55,7 @@ export async function GET(request: Request, { params }: RouteParams) {
       }
     }
 
-    const result: Company = {
+    const result = {
       id: company.id,
       shopId: company.shopId,
       shopifyCompanyId: company.shopifyCompanyId,
@@ -63,6 +69,32 @@ export async function GET(request: Request, { params }: RouteParams) {
       isActive: company.isActive,
       createdAt: company.createdAt,
       updatedAt: company.updatedAt,
+      territory: company.territory,
+      assignedRep: company.assignedRep,
+      contacts: company.contacts.map((c) => ({
+        id: c.id,
+        firstName: c.firstName,
+        lastName: c.lastName,
+        email: c.email,
+        phone: c.phone,
+        title: c.title,
+        isPrimary: c.isPrimary,
+      })),
+      locations: company.locations.map((l) => ({
+        id: l.id,
+        name: l.name,
+        address1: l.address1,
+        address2: l.address2,
+        city: l.city,
+        province: l.province,
+        provinceCode: l.provinceCode,
+        zipcode: l.zipcode,
+        country: l.country,
+        phone: l.phone,
+        isPrimary: l.isPrimary,
+        isShippingAddress: l.isShippingAddress,
+        isBillingAddress: l.isBillingAddress,
+      })),
     };
 
     return NextResponse.json({ data: result, error: null });

@@ -11,12 +11,14 @@
 
 export type ShopifyResourceType =
   | "Company"
+  | "CompanyContact"
   | "CompanyLocation"
   | "Product"
   | "ProductVariant"
   | "Order"
   | "DraftOrder"
-  | "Customer";
+  | "Customer"
+  | "CustomerPaymentMethod";
 
 /**
  * Convert a numeric ID to a Shopify GID for GraphQL queries

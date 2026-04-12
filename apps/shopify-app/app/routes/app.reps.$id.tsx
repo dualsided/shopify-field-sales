@@ -3,7 +3,7 @@ import { useLoaderData, useNavigate, useFetcher, Form, useRevalidator } from "re
 import { useState, useEffect, useCallback } from "react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import prisma from "../db.server";
+import { prisma } from "@field-sales/database";
 import {
   getSalesRepById,
   updateSalesRep,
@@ -15,10 +15,13 @@ import { getActiveTerritories } from "../services/territory.server";
 import {
   getRepQuotaProgress,
   getRepQuotaHistory,
+  getRepForecast,
   type QuotaHistoryItem,
+  type RepForecast,
 } from "../services/quota.server";
 import type { QuotaProgress } from "@field-sales/shared";
 import { SalesRepForm, type SalesRepFormData } from "../components/SalesRepForm";
+import { toast } from "../utils/shopify-ui";
 
 interface Territory {
   id: string;
@@ -31,6 +34,7 @@ interface LoaderData {
   shopId: string | null;
   quotaProgress: QuotaProgress | null;
   quotaHistory: QuotaHistoryItem[];
+  forecast: RepForecast | null;
   currentYear: number;
   currentMonth: number;
 }
@@ -91,6 +95,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       shopId: null,
       quotaProgress: null,
       quotaHistory: [],
+      forecast: null,
       currentYear: new Date().getFullYear(),
       currentMonth: new Date().getMonth() + 1,
     };
@@ -100,11 +105,12 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth() + 1;
 
-  const [rep, allTerritories, quotaProgress, quotaHistory] = await Promise.all([
+  const [rep, allTerritories, quotaProgress, quotaHistory, forecast] = await Promise.all([
     getSalesRepById(shop.id, repId),
     getActiveTerritories(shop.id),
     getRepQuotaProgress(shop.id, repId, currentYear, currentMonth),
     getRepQuotaHistory(shop.id, repId, 6),
+    getRepForecast(shop.id, repId, currentYear, currentMonth),
   ]);
 
   return {
@@ -113,6 +119,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     shopId: shop.id,
     quotaProgress,
     quotaHistory,
+    forecast,
     currentYear,
     currentMonth,
   };
@@ -136,6 +143,13 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   if (contentType?.includes("application/json")) {
     const data = await request.json();
 
+    // Convert form values to approvalThresholdCents
+    // If approval not required, set to null (trusted rep)
+    // Otherwise, convert dollars to cents
+    const approvalThresholdCents = data.requiresOrderApproval
+      ? Math.round(parseFloat(data.approvalThresholdDollars || "0") * 100)
+      : null;
+
     const result = await updateSalesRep(shop.id, repId, {
       firstName: data.firstName,
       lastName: data.lastName,
@@ -143,6 +157,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       phone: data.phone || null,
       role: data.role || "REP",
       territoryIds: data.territoryIds || [],
+      approvalThresholdCents,
     });
 
     if (result.success) return { success: true };
@@ -168,8 +183,26 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   return { error: "Unknown action" };
 };
 
+function getTrendColor(trend: string): "success" | "info" | "critical" {
+  switch (trend) {
+    case "improving": return "success";
+    case "stable": return "info";
+    case "declining": return "critical";
+    default: return "info";
+  }
+}
+
+function getTrendLabel(trend: string): string {
+  switch (trend) {
+    case "improving": return "Improving";
+    case "stable": return "Stable";
+    case "declining": return "Declining";
+    default: return "";
+  }
+}
+
 export default function SalesRepDetailPage() {
-  const { rep, allTerritories, shopId, quotaProgress, quotaHistory, currentYear, currentMonth } = useLoaderData<LoaderData>();
+  const { rep, allTerritories, shopId, quotaProgress, quotaHistory, forecast, currentYear, currentMonth } = useLoaderData<LoaderData>();
   const navigate = useNavigate();
   const fetcher = useFetcher<ActionData>();
   const revalidator = useRevalidator();
@@ -189,6 +222,9 @@ export default function SalesRepDetailPage() {
       setIsEditing(false);
       setFormKey(k => k + 1); // Force form to remount with fresh data
       revalidator.revalidate(); // Reload data from server
+      toast.success("Sales rep updated successfully");
+    } else if (actionData?.error) {
+      toast.error(actionData.error);
     }
   }, [actionData, revalidator]);
 
@@ -227,13 +263,6 @@ export default function SalesRepDetailPage() {
       )}
 
       <s-section heading="Sales Rep Details">
-        {actionData?.error && (
-          <s-banner tone="critical">{actionData.error}</s-banner>
-        )}
-        {actionData?.success && !isEditing && (
-          <s-banner tone="success">Sales rep updated successfully</s-banner>
-        )}
-
         <s-box padding="base" background="subdued" borderRadius="base">
           <SalesRepForm
             key={formKey}
@@ -241,7 +270,6 @@ export default function SalesRepDetailPage() {
             territories={allTerritories}
             onSubmit={handleSubmit}
             onCancel={() => setIsEditing(false)}
-            actionError={actionData?.error}
           />
         </s-box>
       </s-section>
@@ -253,9 +281,9 @@ export default function SalesRepDetailPage() {
             <s-heading>Quota Performance</s-heading>
             <s-button
               variant="tertiary"
-              onClick={() => navigate(`/app/quotas/manage?year=${currentYear}&month=${currentMonth}`)}
+              href={`/app/quotas/${rep.id}`}
             >
-              Edit Quotas
+              Edit Quota
             </s-button>
           </s-grid>
 
@@ -296,6 +324,55 @@ export default function SalesRepDetailPage() {
             </s-stack>
           </s-box>
 
+          {/* Forecasting Section */}
+          {forecast && quotaProgress?.hasQuota && (
+            <s-box padding="base" background="subdued" borderRadius="base">
+              <s-stack gap="base">
+                <s-text type="strong">Forecast & Trends</s-text>
+                <s-grid gap="base" gridTemplateColumns="1fr 1fr 1fr">
+                  {/* Run Rate */}
+                  {forecast.runRate && (
+                    <s-stack gap="none">
+                      <s-text color="subdued">Run Rate Projection</s-text>
+                      <s-text type="strong">{formatCents(forecast.runRate.projectedEndOfMonthCents)}</s-text>
+                      <s-badge tone={forecast.runRate.onTrackPercent >= 100 ? "success" : "warning"}>
+                        {forecast.runRate.onTrackPercent}% of target
+                      </s-badge>
+                    </s-stack>
+                  )}
+
+                  {/* YoY Comparison */}
+                  <s-stack gap="none">
+                    <s-text color="subdued">vs Last Year</s-text>
+                    {forecast.yoy.achievementGrowthPercent !== null ? (
+                      <>
+                        <s-badge tone={forecast.yoy.achievementGrowthPercent >= 0 ? "success" : "critical"}>
+                          {forecast.yoy.achievementGrowthPercent > 0 ? "+" : ""}{forecast.yoy.achievementGrowthPercent}%
+                        </s-badge>
+                        <s-text color="subdued">
+                          LY: {formatCents(forecast.yoy.lastYearAchievedCents)}
+                        </s-text>
+                      </>
+                    ) : (
+                      <s-text color="subdued">No data</s-text>
+                    )}
+                  </s-stack>
+
+                  {/* Trend */}
+                  <s-stack gap="none">
+                    <s-text color="subdued">Trend ({forecast.trend.monthsAnalyzed} mo)</s-text>
+                    <s-badge tone={getTrendColor(forecast.trend.trend)}>
+                      {getTrendLabel(forecast.trend.trend)}
+                    </s-badge>
+                    <s-text color="subdued">
+                      Avg: {forecast.trend.averageAttainmentPercent}% attainment
+                    </s-text>
+                  </s-stack>
+                </s-grid>
+              </s-stack>
+            </s-box>
+          )}
+
           {/* Historical Performance */}
           {quotaHistory.length > 0 && (
             <>
@@ -327,47 +404,6 @@ export default function SalesRepDetailPage() {
 
           {quotaHistory.length === 0 && !quotaProgress?.hasQuota && (
             <s-text color="subdued">No quota history available.</s-text>
-          )}
-        </s-stack>
-      </s-section>
-
-      <s-section>
-        <s-stack gap="base">
-          <s-heading>Assigned Territories ({rep.territories.length})</s-heading>
-          <s-paragraph>Territories this rep can access in the mobile app.</s-paragraph>
-
-          {rep.territories.length === 0 ? (
-            <s-box padding="base" background="subdued" borderRadius="base">
-              <s-paragraph>No territories assigned.</s-paragraph>
-            </s-box>
-          ) : (
-            <s-table>
-              <s-table-header>
-                <s-table-row>
-                  <s-table-cell>Territory</s-table-cell>
-                  <s-table-cell>Companies</s-table-cell>
-                  <s-table-cell>Primary</s-table-cell>
-                </s-table-row>
-              </s-table-header>
-              <s-table-body>
-                {rep.territories.map((territory) => (
-                  <s-table-row key={territory.id}>
-                    <s-table-cell>
-                      <s-button
-                        variant="tertiary"
-                        onClick={() => navigate(`/app/territories/${territory.id}`)}
-                      >
-                        {territory.name}
-                      </s-button>
-                    </s-table-cell>
-                    <s-table-cell>{territory.companyCount}</s-table-cell>
-                    <s-table-cell>
-                      {territory.isPrimary && <s-badge tone="info">Primary</s-badge>}
-                    </s-table-cell>
-                  </s-table-row>
-                ))}
-              </s-table-body>
-            </s-table>
           )}
         </s-stack>
       </s-section>

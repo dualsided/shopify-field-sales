@@ -1,9 +1,13 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs, HeadersFunction } from "react-router";
-import { useLoaderData, useNavigate, useActionData, Form } from "react-router";
+import { useLoaderData, useNavigate, useActionData, Form, useFetcher } from "react-router";
+import { useState, useCallback, useEffect } from "react";
+import { useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "../shopify.server";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import prisma from "../db.server";
+import { prisma } from "@field-sales/database";
 import { toGid } from "../lib/shopify-ids";
+import { SalesRepPicker, type SalesRep, type TerritoryRep } from "../components/SalesRepPicker";
+import { Modal } from "../components/Modal";
 
 interface Location {
   id: string;
@@ -15,6 +19,7 @@ interface Location {
   isPrimary: boolean;
   territoryId: string | null;
   territoryName: string | null;
+  territoryRepName: string | null;
 }
 
 interface Contact {
@@ -25,9 +30,23 @@ interface Contact {
   phone: string | null;
   isPrimary: boolean;
   shopifyCustomerId: string | null;
+  hasPaymentMethods: boolean;
 }
 
-interface SalesRep {
+interface PaymentMethod {
+  id: string;
+  contactId: string;
+  contactName: string;
+  contactEmail: string;
+  brand: string | null;
+  last4: string | null;
+  expiryMonth: number | null;
+  expiryYear: number | null;
+  isDefault: boolean;
+  isActive: boolean;
+}
+
+interface LoaderSalesRep {
   id: string;
   name: string;
 }
@@ -40,17 +59,18 @@ interface CompanyData {
   shopifyPaymentTerms: string | null; // Payment terms from Shopify for managed companies
   assignedRepId: string | null;
   assignedRepName: string | null;
-  territoryRepName: string | null; // Rep derived from territory assignment
+  territoryReps: TerritoryRep[]; // Reps derived from location/territory assignments
   isActive: boolean;
   isShopifyManaged: boolean;
   shopifyCompanyId: string | null;
   locations: Location[];
   contacts: Contact[];
+  paymentMethods: PaymentMethod[];
 }
 
 interface LoaderData {
   company: CompanyData | null;
-  reps: SalesRep[];
+  reps: LoaderSalesRep[];
   shopId: string | null;
 }
 
@@ -58,7 +78,35 @@ interface ActionData {
   success?: boolean;
   error?: string;
   deleted?: boolean;
+  paymentMethodRemoved?: boolean;
+  paymentMethodEmailSent?: boolean;
+  accountActivationUrl?: string;
+  contactName?: string;
 }
+
+// GraphQL mutation to generate customer account activation URL
+// This gives customers access to their account where they can add payment methods
+const CUSTOMER_ACCOUNT_ACTIVATION_URL_MUTATION = `#graphql
+  mutation customerGenerateAccountActivationUrl($customerId: ID!) {
+    customerGenerateAccountActivationUrl(customerId: $customerId) {
+      accountActivationUrl
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+interface CustomerAccountActivationUrlResponse {
+  data: {
+    customerGenerateAccountActivationUrl: {
+      accountActivationUrl: string | null;
+      userErrors: Array<{ field: string; message: string }>;
+    } | null;
+  };
+}
+
 
 // GraphQL query to fetch payment terms from Shopify company
 const COMPANY_PAYMENT_TERMS_QUERY = `#graphql
@@ -115,7 +163,7 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     return { company: null, territories: [], reps: [], shopId: null };
   }
 
-  const [company, reps] = await Promise.all([
+  const [company, reps, paymentMethods] = await Promise.all([
     prisma.company.findFirst({
       where: {
         id: companyId,
@@ -142,6 +190,13 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
           orderBy: [{ isPrimary: "desc" }, { name: "asc" }],
         },
         contacts: {
+          include: {
+            paymentMethods: {
+              where: { isActive: true },
+              select: { id: true },
+              take: 1,
+            },
+          },
           orderBy: [{ isPrimary: "desc" }, { lastName: "asc" }],
         },
       },
@@ -151,20 +206,41 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       select: { id: true, firstName: true, lastName: true },
       orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
     }),
+    // Fetch all payment methods for contacts in this company
+    prisma.paymentMethod.findMany({
+      where: {
+        companyId,
+        isActive: true,
+      },
+      include: {
+        contact: {
+          select: {
+            id: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+          },
+        },
+      },
+      orderBy: [{ isDefault: "desc" }, { createdAt: "desc" }],
+    }),
   ]);
 
   if (!company) {
     return { company: null, reps: [], shopId: shop.id };
   }
 
-  // Derive rep from territory if no direct assignment
-  // Use the primary location (first in list since sorted by isPrimary desc)
-  let territoryRepName: string | null = null;
-  const primaryLocation = company.locations[0];
-  if (primaryLocation?.territory?.repTerritories?.[0]?.rep) {
-    const rep = primaryLocation.territory.repTerritories[0].rep;
-    territoryRepName = `${rep.firstName} ${rep.lastName}`;
-  }
+  // Build territory reps array from all locations with territory assignments
+  const territoryReps: TerritoryRep[] = company.locations
+    .filter((l) => l.territory?.repTerritories?.[0]?.rep)
+    .map((l) => {
+      const rep = l.territory!.repTerritories[0].rep;
+      return {
+        repName: `${rep.firstName} ${rep.lastName}`,
+        territoryName: l.territory!.name,
+        locationName: l.name,
+      };
+    });
 
   // Fetch payment terms from Shopify for Shopify-managed companies
   let shopifyPaymentTerms: string | null = null;
@@ -195,21 +271,25 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
       assignedRepName: company.assignedRep
         ? `${company.assignedRep.firstName} ${company.assignedRep.lastName}`
         : null,
-      territoryRepName,
+      territoryReps,
       isActive: company.isActive,
       isShopifyManaged: company.shopifyCompanyId !== null,
       shopifyCompanyId: company.shopifyCompanyId,
-      locations: company.locations.map((l) => ({
-        id: l.id,
-        name: l.name,
-        address1: l.address1,
-        city: l.city,
-        provinceCode: l.provinceCode,
-        zipcode: l.zipcode,
-        isPrimary: l.isPrimary,
-        territoryId: l.territoryId,
-        territoryName: l.territory?.name || null,
-      })),
+      locations: company.locations.map((l) => {
+        const rep = l.territory?.repTerritories?.[0]?.rep;
+        return {
+          id: l.id,
+          name: l.name,
+          address1: l.address1,
+          city: l.city,
+          provinceCode: l.provinceCode,
+          zipcode: l.zipcode,
+          isPrimary: l.isPrimary,
+          territoryId: l.territoryId,
+          territoryName: l.territory?.name || null,
+          territoryRepName: rep ? `${rep.firstName} ${rep.lastName}` : null,
+        };
+      }),
       contacts: company.contacts.map((c) => ({
         id: c.id,
         firstName: c.firstName,
@@ -218,6 +298,19 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
         phone: c.phone,
         isPrimary: c.isPrimary,
         shopifyCustomerId: c.shopifyCustomerId,
+        hasPaymentMethods: c.paymentMethods.length > 0,
+      })),
+      paymentMethods: paymentMethods.map((pm) => ({
+        id: pm.id,
+        contactId: pm.contactId || "",
+        contactName: pm.contact ? `${pm.contact.firstName} ${pm.contact.lastName}` : "Unknown",
+        contactEmail: pm.contact?.email || "",
+        brand: pm.brand,
+        last4: pm.last4,
+        expiryMonth: pm.expiryMonth,
+        expiryYear: pm.expiryYear,
+        isDefault: pm.isDefault,
+        isActive: pm.isActive,
       })),
     },
     reps: reps.map((r) => ({ id: r.id, name: `${r.firstName} ${r.lastName}` })),
@@ -248,6 +341,66 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
 
   const formData = await request.formData();
   const actionType = formData.get("_action") as string;
+
+  // Handle payment method actions (allowed for all companies)
+  if (actionType === "removePaymentMethod") {
+    const paymentMethodId = formData.get("paymentMethodId") as string;
+    if (!paymentMethodId) {
+      return { error: "Payment method ID required" };
+    }
+
+    // Soft delete - mark as inactive
+    await prisma.paymentMethod.update({
+      where: { id: paymentMethodId },
+      data: { isActive: false },
+    });
+
+    return { paymentMethodRemoved: true };
+  }
+
+  if (actionType === "generateAccountActivationUrl") {
+    const { admin } = await authenticate.admin(request);
+    const contactId = formData.get("contactId") as string;
+    if (!contactId) {
+      return { error: "Contact ID required" };
+    }
+
+    // Get the contact's Shopify customer ID
+    const contact = await prisma.companyContact.findUnique({
+      where: { id: contactId },
+      select: { shopifyCustomerId: true, firstName: true, lastName: true, email: true },
+    });
+
+    if (!contact) {
+      return { error: "Contact not found" };
+    }
+
+    if (!contact.shopifyCustomerId) {
+      return { error: "Contact is not synced to Shopify yet. Please wait for sync to complete." };
+    }
+
+    // Generate customer account activation URL
+    const response = await admin.graphql(CUSTOMER_ACCOUNT_ACTIVATION_URL_MUTATION, {
+      variables: { customerId: toGid("Customer", contact.shopifyCustomerId) },
+    });
+
+    const result = (await response.json()) as CustomerAccountActivationUrlResponse;
+    const urlResult = result.data?.customerGenerateAccountActivationUrl;
+
+    if (urlResult?.userErrors?.length) {
+      return { error: urlResult.userErrors.map((e) => e.message).join(", ") };
+    }
+
+    if (!urlResult?.accountActivationUrl) {
+      return { error: "Failed to generate account activation URL" };
+    }
+
+    console.log(`[PaymentMethod] Generated account activation URL for ${contact.firstName} ${contact.lastName}`);
+    return {
+      accountActivationUrl: urlResult.accountActivationUrl,
+      contactName: `${contact.firstName} ${contact.lastName}`,
+    };
+  }
 
   // For Shopify-managed companies, only allow rep assignment
   if (company.shopifyCompanyId !== null) {
@@ -319,6 +472,75 @@ export default function CompanyDetailPage() {
   const { company, reps, shopId } = useLoaderData<LoaderData>();
   const actionData = useActionData<ActionData>();
   const navigate = useNavigate();
+  const shopify = useAppBridge();
+  const fetcher = useFetcher<ActionData>();
+
+  const SAVE_BAR_ID = "company-rep-save-bar";
+
+  // Modal state for adding payment method
+  const [showAddPaymentModal, setShowAddPaymentModal] = useState(false);
+
+  // Initialize selected rep from loader data
+  const initialRepId = company?.assignedRepId || null;
+  const initialRep = initialRepId
+    ? reps.find((r) => r.id === initialRepId) || null
+    : null;
+  const [selectedRep, setSelectedRep] = useState<SalesRep | null>(
+    initialRep ? { id: initialRep.id, name: initialRep.name } : null
+  );
+
+  // Track if rep selection has changed (dirty state)
+  // Use || null to normalize undefined to null for comparison
+  const isDirty = (selectedRep?.id || null) !== initialRepId;
+
+  // Show/hide SaveBar based on dirty state
+  useEffect(() => {
+    if (isDirty) {
+      shopify.saveBar.show(SAVE_BAR_ID);
+    } else {
+      shopify.saveBar.hide(SAVE_BAR_ID);
+    }
+  }, [isDirty, shopify]);
+
+  // Hide SaveBar and show toast on successful save
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data?.success) {
+      shopify.saveBar.hide(SAVE_BAR_ID);
+      shopify.toast.show("Rep assignment saved");
+    }
+    if (fetcher.state === "idle" && fetcher.data?.paymentMethodRemoved) {
+      shopify.toast.show("Payment method removed");
+    }
+    if (fetcher.state === "idle" && fetcher.data?.accountActivationUrl) {
+      // Copy URL to clipboard
+      navigator.clipboard.writeText(fetcher.data.accountActivationUrl);
+      shopify.toast.show(`Activation link copied! Share with ${fetcher.data.contactName}`);
+    }
+  }, [fetcher.state, fetcher.data, shopify]);
+
+  // Handle save
+  const handleSave = useCallback(() => {
+    if (!company) return;
+    fetcher.submit(
+      {
+        _action: "assign",
+        assignedRepId: selectedRep?.id || "",
+      },
+      { method: "post" }
+    );
+  }, [fetcher, company, selectedRep]);
+
+  // Handle discard - reset to initial value
+  const handleDiscard = useCallback(() => {
+    setSelectedRep(initialRep ? { id: initialRep.id, name: initialRep.name } : null);
+  }, [initialRep]);
+
+  // Load reps from API for the picker
+  const loadReps = useCallback(async (): Promise<SalesRep[]> => {
+    const response = await fetch("/api/reps");
+    const data = await response.json();
+    return data.reps || [];
+  }, []);
 
   // Redirect after delete
   if (actionData?.deleted) {
@@ -342,20 +564,29 @@ export default function CompanyDetailPage() {
   const isShopifyManaged = company.isShopifyManaged;
 
   return (
-    <s-page heading={company.name}>
-      <s-link slot="secondary-actions" href={isShopifyManaged ? `shopify://admin/companies/${company.shopifyCompanyId}` : `/app/companies/${company.id}`}>
-        Edit Company
-      </s-link>
-      {/* Status Banner */}
-      {isShopifyManaged && (
-        <s-section>
-          <s-banner tone="info">
-            This company is managed in Shopify Admin. You can only update territory and rep assignments here.
-          </s-banner>
-        </s-section>
-      )}
+    <>
+      {/* SaveBar for rep assignment changes */}
+      <ui-save-bar id={SAVE_BAR_ID}>
+        <button variant="primary" onClick={handleSave} disabled={fetcher.state !== "idle"}>
+          {fetcher.state !== "idle" ? "Saving..." : "Save"}
+        </button>
+        <button onClick={handleDiscard}>Discard</button>
+      </ui-save-bar>
 
-      <s-section>
+      <s-page heading={company.name}>
+        <s-link slot="secondary-actions" href={isShopifyManaged ? `shopify://admin/companies/${company.shopifyCompanyId}` : `/app/companies/${company.id}`}>
+          Edit Company
+        </s-link>
+
+        <s-section heading="Company Information">
+
+        {/* Status Banner */}
+        {isShopifyManaged && (
+          <s-banner tone="info">
+            Managed by Shopify B2B. We extend companies with territory and rep assignments here but you'll be able to manage the company in Shopify.
+          </s-banner>
+        )}
+
         {actionData?.error && (
           <s-banner tone="critical">{actionData.error}</s-banner>
         )}
@@ -366,64 +597,33 @@ export default function CompanyDetailPage() {
         {isShopifyManaged ? (
           /* Shopify-Managed Company: Read-only info + assignment form */
           <s-stack gap="base">
-            <s-heading>Company Information</s-heading>
 
-            <s-box padding="base" background="subdued" borderRadius="base">
-              <s-stack gap="base">
-                <s-stack gap="none">
-                  <s-text color="subdued">Company Name</s-text>
-                  <s-text>{company.name}</s-text>
-                </s-stack>
-                {company.accountNumber && (
-                  <s-stack gap="none">
-                    <s-text color="subdued">Account Number</s-text>
-                    <s-text>{company.accountNumber}</s-text>
-                  </s-stack>
-                )}
-                <s-stack gap="none">
-                  <s-text color="subdued">Payment Terms</s-text>
-                  <s-text>{company.shopifyPaymentTerms || company.paymentTerms.replace(/_/g, ' ')}</s-text>
-                </s-stack>
-              </s-stack>
-            </s-box>
+            <s-grid gridTemplateColumns="1fr 1fr auto" gap="base" alignItems="end">
+              <s-text-field
+                label="Company Name"
+                readOnly={true}
+                value={company.name}
+              />
+              <s-text-field
+                label="Payment Terms"
+                readOnly={true}
+                value={company.shopifyPaymentTerms || company.paymentTerms.replace(/_/g, ' ')}
+              />
+              <s-button variant="tertiary" href={`shopify://admin/companies/${company.shopifyCompanyId}`} icon="external">
+                View In Shopify
+              </s-button>
+            </s-grid>
 
             <s-divider />
 
             <s-heading>Rep Assignment</s-heading>
-            {/* Show territory-derived rep if no direct assignment */}
-            {!company.assignedRepId && company.territoryRepName && (
-              <s-box padding="base" background="subdued" borderRadius="base">
-                <s-stack gap="none">
-                  <s-text color="subdued">Assigned via Territory</s-text>
-                  <s-text>{company.territoryRepName}</s-text>
-                </s-stack>
-              </s-box>
-            )}
-            {!company.assignedRepId && !company.territoryRepName && (
-              <s-box padding="base" background="subdued" borderRadius="base">
-                <s-text color="subdued">No rep assigned (no territory match or no rep on territory)</s-text>
-              </s-box>
-            )}
-            <Form method="post">
-              <input type="hidden" name="_action" value="assign" />
-              <s-stack gap="base">
-                {reps.length > 0 && (
-                  <s-select label="Override Rep Assignment" name="assignedRepId" value={company.assignedRepId || ""}>
-                    <s-option value="">{company.territoryRepName ? "Use territory rep" : "No assigned rep"}</s-option>
-                    {reps.map((r) => (
-                      <s-option key={r.id} value={r.id}>{r.name}</s-option>
-                    ))}
-                  </s-select>
-                )}
-
-                <s-button-group>
-                  <s-button type="submit">Save Assignment</s-button>
-                  <s-button variant="secondary" onClick={() => navigate("/app/companies")}>
-                    Back to Companies
-                  </s-button>
-                </s-button-group>
-              </s-stack>
-            </Form>
+            <SalesRepPicker
+              heading="Select sales rep"
+              selectedRep={selectedRep}
+              territoryReps={company.territoryReps}
+              onSelect={setSelectedRep}
+              onLoadReps={loadReps}
+            />
           </s-stack>
         ) : (
           /* Internal Company: Full edit form */
@@ -452,24 +652,14 @@ export default function CompanyDetailPage() {
                 <s-option value="NET_60">Net 60</s-option>
               </s-select>
 
-              {/* Show territory-derived rep if no direct assignment */}
-              {!company.assignedRepId && company.territoryRepName && (
-                <s-box padding="base" background="subdued" borderRadius="base">
-                  <s-stack gap="none">
-                    <s-text color="subdued">Rep via Territory</s-text>
-                    <s-text>{company.territoryRepName}</s-text>
-                  </s-stack>
-                </s-box>
-              )}
-
-              {reps.length > 0 && (
-                <s-select label={company.territoryRepName ? "Override Rep Assignment" : "Assigned Rep"} name="assignedRepId" value={company.assignedRepId || ""}>
-                  <s-option value="">{company.territoryRepName ? "Use territory rep" : "No assigned rep"}</s-option>
-                  {reps.map((r) => (
-                    <s-option key={r.id} value={r.id}>{r.name}</s-option>
-                  ))}
-                </s-select>
-              )}
+              <input type="hidden" name="assignedRepId" value={selectedRep?.id || ""} />
+              <SalesRepPicker
+                heading="Select sales rep"
+                selectedRep={selectedRep}
+                territoryReps={company.territoryReps}
+                onSelect={setSelectedRep}
+                onLoadReps={loadReps}
+              />
 
               <s-button-group>
                 <s-button type="submit">Save Changes</s-button>
@@ -483,14 +673,11 @@ export default function CompanyDetailPage() {
       </s-section>
 
       {/* Locations Section */}
-      <s-section>
+      <s-section heading="Locations">
         <s-stack gap="base">
-          <s-stack gap="base">
-            <s-heading>Locations ({company.locations.length})</s-heading>
-            <s-paragraph>
-              Manage shipping and billing addresses for this company.
-            </s-paragraph>
-          </s-stack>
+          <s-paragraph>
+            Locations assocaited to this company. These are managed in Shopify
+          </s-paragraph>
 
           {company.locations.length === 0 ? (
             <s-box padding="base" background="subdued" borderRadius="base">
@@ -498,14 +685,12 @@ export default function CompanyDetailPage() {
             </s-box>
           ) : (
             <s-table>
-              <s-table-header>
-                <s-table-row>
-                  <s-table-cell>Name</s-table-cell>
-                  <s-table-cell>Address</s-table-cell>
-                  <s-table-cell>ZIP</s-table-cell>
-                  <s-table-cell>Primary</s-table-cell>
-                </s-table-row>
-              </s-table-header>
+              <s-table-header-row>
+                <s-table-header>Name</s-table-header>
+                <s-table-header>Address</s-table-header>
+                <s-table-header>ZIP</s-table-header>
+                <s-table-header>Primary</s-table-header>
+              </s-table-header-row>
               <s-table-body>
                 {company.locations.map((loc) => (
                   <s-table-row key={loc.id}>
@@ -526,14 +711,11 @@ export default function CompanyDetailPage() {
       </s-section>
 
       {/* Contacts Section */}
-      <s-section>
+      <s-section heading="Contacts">
         <s-stack gap="base">
-          <s-stack gap="base">
-            <s-heading>Contacts ({company.contacts.length})</s-heading>
-            <s-paragraph>
-              Contacts are synced to Shopify as customers for billing and orders.
-            </s-paragraph>
-          </s-stack>
+          <s-paragraph>
+            Contacts assocaited to this company. These are managed in Shopify
+          </s-paragraph>
 
           {company.contacts.length === 0 ? (
             <s-box padding="base" background="subdued" borderRadius="base">
@@ -541,20 +723,21 @@ export default function CompanyDetailPage() {
             </s-box>
           ) : (
             <s-table>
-              <s-table-header>
-                <s-table-row>
-                  <s-table-cell>Name</s-table-cell>
-                  <s-table-cell>Email</s-table-cell>
-                  <s-table-cell>Phone</s-table-cell>
-                  <s-table-cell>Status</s-table-cell>
-                </s-table-row>
-              </s-table-header>
+              <s-table-header-row>
+                <s-table-header>Name</s-table-header>
+                <s-table-header>Email</s-table-header>
+                <s-table-header>Phone</s-table-header>
+                <s-table-header>Status</s-table-header>
+              </s-table-header-row>
               <s-table-body>
                 {company.contacts.map((contact) => (
                   <s-table-row key={contact.id}>
                     <s-table-cell>
-                      {contact.firstName} {contact.lastName}
-                      {contact.isPrimary && <s-badge tone="info">Primary</s-badge>}
+                      <s-stack direction="inline" gap="small-200">
+                        {contact.firstName} {contact.lastName}
+                        {contact.isPrimary && <s-badge tone="info">Primary</s-badge>}
+                        {contact.hasPaymentMethods && <s-badge tone="success" icon="check-circle">Saved payment</s-badge>}
+                      </s-stack>
                     </s-table-cell>
                     <s-table-cell>{contact.email}</s-table-cell>
                     <s-table-cell>{contact.phone || "—"}</s-table-cell>
@@ -564,6 +747,73 @@ export default function CompanyDetailPage() {
                       ) : (
                         <s-badge tone="warning">Pending</s-badge>
                       )}
+                    </s-table-cell>
+                  </s-table-row>
+                ))}
+              </s-table-body>
+            </s-table>
+          )}
+        </s-stack>
+      </s-section>
+
+      {/* Payment Methods Section */}
+      <s-section>
+        <s-stack gap="base">
+          <s-stack direction="inline" gap="base" justifyContent="space-between" alignItems="center">
+            <s-heading>Payment Methods</s-heading>
+            <s-button variant="secondary" onClick={() => setShowAddPaymentModal(true)}>
+              Add Payment Method
+            </s-button>
+          </s-stack>
+
+          <s-paragraph>
+            Saved payment methods can be used for automatic billing on orders.
+          </s-paragraph>
+
+          {company.paymentMethods.length === 0 ? (
+            <s-box padding="base" background="subdued" borderRadius="base">
+              <s-paragraph>No payment methods on file. Add one to enable automatic billing.</s-paragraph>
+            </s-box>
+          ) : (
+            <s-table>
+              <s-table-header-row>
+                <s-table-header>Card</s-table-header>
+                <s-table-header>Contact</s-table-header>
+                <s-table-header>Expires</s-table-header>
+                <s-table-header>Status</s-table-header>
+                <s-table-header></s-table-header>
+              </s-table-header-row>
+              <s-table-body>
+                {company.paymentMethods.map((pm) => (
+                  <s-table-row key={pm.id}>
+                    <s-table-cell>
+                      <s-stack direction="inline" gap="small-200" alignItems="center">
+                        <strong>{pm.brand || "Card"} •••• {pm.last4 || "****"}</strong>
+                        {pm.isDefault && <s-badge tone="info">Default</s-badge>}
+                      </s-stack>
+                    </s-table-cell>
+                    <s-table-cell>
+                      <s-stack gap="none">
+                        <span>{pm.contactName}</span>
+                        <span style={{ color: "var(--p-color-text-subdued)" }}>{pm.contactEmail}</span>
+                      </s-stack>
+                    </s-table-cell>
+                    <s-table-cell>
+                      {pm.expiryMonth && pm.expiryYear
+                        ? `${String(pm.expiryMonth).padStart(2, "0")}/${String(pm.expiryYear).slice(-2)}`
+                        : "—"}
+                    </s-table-cell>
+                    <s-table-cell>
+                      <s-badge tone="success">Active</s-badge>
+                    </s-table-cell>
+                    <s-table-cell>
+                      <fetcher.Form method="post">
+                        <input type="hidden" name="_action" value="removePaymentMethod" />
+                        <input type="hidden" name="paymentMethodId" value={pm.id} />
+                        <s-button variant="tertiary" tone="critical" type="submit">
+                          Remove
+                        </s-button>
+                      </fetcher.Form>
                     </s-table-cell>
                   </s-table-row>
                 ))}
@@ -587,7 +837,85 @@ export default function CompanyDetailPage() {
           </s-stack>
         </s-section>
       )}
-    </s-page>
+      </s-page>
+
+      {/* Add Payment Method Modal */}
+      <Modal
+        id="add-payment-modal"
+        heading="Add Payment Method"
+        open={showAddPaymentModal}
+        onClose={() => {
+          setShowAddPaymentModal(false);
+        }}
+        secondaryActions={[
+          { content: "Close", onAction: () => setShowAddPaymentModal(false) },
+        ]}
+      >
+        <s-box padding="base">
+          <s-stack gap="base">
+            {/* Show activation URL if generated */}
+            {fetcher.data?.accountActivationUrl ? (
+              <>
+                <s-banner tone="success">
+                  Account activation link generated for {fetcher.data.contactName}!
+                </s-banner>
+                <s-paragraph>
+                  The link has been copied to your clipboard. Share this secure link with the contact
+                  so they can access their account and add a payment method.
+                </s-paragraph>
+                <s-text-field
+                  label="Activation Link"
+                  value={fetcher.data.accountActivationUrl}
+                  readOnly
+                />
+                <s-button
+                  variant="secondary"
+                  onClick={() => {
+                    navigator.clipboard.writeText(fetcher.data!.accountActivationUrl!);
+                    shopify.toast.show("Link copied to clipboard");
+                  }}
+                >
+                  Copy Link Again
+                </s-button>
+              </>
+            ) : (
+              <>
+                <s-paragraph>
+                  Generate a secure account activation link for a contact. They can use this link to
+                  access their Shopify customer account and add a payment method.
+                </s-paragraph>
+
+                {company.contacts.filter((c) => c.shopifyCustomerId).length === 0 ? (
+                  <s-banner tone="warning">
+                    No synced contacts available. Contacts must be synced to Shopify before they can add payment methods.
+                  </s-banner>
+                ) : (
+                  <fetcher.Form method="post">
+                    <input type="hidden" name="_action" value="generateAccountActivationUrl" />
+                    <s-stack gap="base">
+                      <s-select label="Contact" name="contactId" required>
+                        <s-option value="">Select a contact...</s-option>
+                        {company.contacts
+                          .filter((c) => c.shopifyCustomerId)
+                          .map((contact) => (
+                            <s-option key={contact.id} value={contact.id}>
+                              {contact.firstName} {contact.lastName} ({contact.email})
+                            </s-option>
+                          ))}
+                      </s-select>
+
+                      <s-button type="submit" variant="primary" disabled={fetcher.state !== "idle"}>
+                        {fetcher.state !== "idle" ? "Generating..." : "Generate Activation Link"}
+                      </s-button>
+                    </s-stack>
+                  </fetcher.Form>
+                )}
+              </>
+            )}
+          </s-stack>
+        </s-box>
+      </Modal>
+    </>
   );
 }
 
