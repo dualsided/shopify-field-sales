@@ -111,7 +111,8 @@ const shopify = shopifyApp({
           accessToken: session.accessToken,
         });
 
-        // Upsert shop record
+        // Upsert shop record (include API key to identify which app instance)
+        const apiKey = process.env.SHOPIFY_API_KEY || null;
         await prisma.shop.upsert({
           where: { shopifyDomain: session.shop },
           update: {
@@ -122,6 +123,7 @@ const shopify = shopifyApp({
             shopifyPlan: planName,
             planDetectedAt: new Date(),
             isActive: true,
+            appApiKey: apiKey,
           },
           create: {
             shopifyDomain: session.shop,
@@ -132,6 +134,7 @@ const shopify = shopifyApp({
             shopifyPlan: planName,
             planDetectedAt: new Date(),
             isActive: true,
+            appApiKey: apiKey,
           },
         });
 

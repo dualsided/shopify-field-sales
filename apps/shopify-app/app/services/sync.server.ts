@@ -329,17 +329,25 @@ export async function syncAllShops(
   const shopResults: ShopSyncResult[] = [];
 
   try {
-    // Get all active shops with valid access tokens
+    // Get the current app's API key to filter shops
+    const currentApiKey = process.env.SHOPIFY_API_KEY || null;
+
+    // Get all active shops with valid access tokens that belong to this app instance
     const shops = await prisma.shop.findMany({
       where: {
         isActive: true,
         // Only sync shops that have completed installation
         accessToken: { not: "" },
+        // Only sync shops that belong to this app instance (or have no appApiKey set for backwards compat)
+        OR: [
+          { appApiKey: currentApiKey },
+          { appApiKey: null },
+        ],
       },
-      select: { id: true, shopifyDomain: true },
+      select: { id: true, shopifyDomain: true, appApiKey: true },
     });
 
-    console.log(`[Sync] Starting sync for ${shops.length} shops`);
+    console.log(`[Sync] Starting sync for ${shops.length} shops (appApiKey: ${currentApiKey?.substring(0, 8)}...)`);
 
     // Process shops sequentially to avoid rate limiting
     for (const shop of shops) {

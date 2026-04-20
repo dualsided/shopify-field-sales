@@ -51,6 +51,9 @@ model Shop {
   config              Json?
   isActive            Boolean         @default(true) @map("is_active")
 
+  // App instance identification (for multi-deployment with shared DB)
+  appApiKey           String?         @map("app_api_key")
+
   // Shopify plan detection
   shopifyPlan         String?         @map("shopify_plan")
   hasManagedCompanies Boolean         @default(false) @map("has_managed_companies")
